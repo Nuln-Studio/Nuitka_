@@ -1,0 +1,12 @@
+[package]
+name = "nuitka-rs"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+thiserror = "1.0"
+semver = "1.0"
+tauri = { version = "2", features = [] }

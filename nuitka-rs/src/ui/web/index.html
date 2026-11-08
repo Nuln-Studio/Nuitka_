@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Nuitka++</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f26;
+    --line: #2a2f3a;
+    --text: #e6e9ef;
+    --muted: #8b93a3;
+    --accent: #4ea1ff;
+    --ok: #3ddc84;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .5px; }
+  h1 span { color: var(--accent); }
+  button {
+    background: var(--accent);
+    color: #08111d;
+    border: 0;
+    border-radius: 6px;
+    padding: 8px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  main {
+    flex: 1;
+    overflow: auto;
+    padding: 20px 24px 28px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-content: start;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px;
+    min-height: 120px;
+  }
+  .card.wide { grid-column: 1 / -1; }
+  .card h2 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font: 13px/1.7 Consolas, "Cascadia Mono", monospace;
+    color: var(--text);
+  }
+  .verdict {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(78, 161, 255, .08);
+    border: 1px solid rgba(78, 161, 255, .35);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .verdict span { color: var(--muted); font-size: 12px; letter-spacing: 1px; }
+  .verdict strong { color: var(--ok); font-size: 15px; font-weight: 600; }
+  .hint { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Nuitka<span>++</span></h1>
+    <button id="refresh">重新扫描</button>
+  </header>
+  <main>
+    <section class="card">
+      <h2>Python</h2>
+      <pre id="python">扫描中…</pre>
+    </section>
+    <section class="card">
+      <h2>Nuitka</h2>
+      <pre id="nuitka">扫描中…</pre>
+    </section>
+    <section class="card wide">
+      <h2>编译器</h2>
+      <pre id="compilers">扫描中…</pre>
+    </section>
+    <section class="verdict">
+      <span>推荐</span>
+      <strong id="recommendation">—</strong>
+    </section>
+  </main>
+  <script>
+    const bridge = window.__TAURI__ && window.__TAURI__.core;
+    const button = document.getElementById('refresh');
+    const fields = {
+      python: document.getElementById('python'),
+      nuitka: document.getElementById('nuitka'),
+      compilers: document.getElementById('compilers'),
+      recommendation: document.getElementById('recommendation'),
+    };
+
+    async function refresh() {
+      if (!bridge) {
+        fields.compilers.textContent = '没有检测到 Tauri 环境，页面是直接打开的。';
+        return;
+      }
+      button.disabled = true;
+      for (const key of ['python', 'nuitka', 'compilers']) {
+        fields[key].textContent = '扫描中…';
+      }
+      try {
+        const data = JSON.parse(await bridge.invoke('scan'));
+        fields.python.textContent = data.python || '—';
+        fields.nuitka.textContent = data.nuitka || '—';
+        fields.compilers.textContent = data.compilers || '—';
+        fields.recommendation.textContent = data.recommendation || '—';
+      } catch (error) {
+        fields.compilers.textContent = '扫描失败：' + error;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    button.addEventListener('click', refresh);
+    window.addEventListener('DOMContentLoaded', refresh);
+  </script>
+</body>
+</html>
