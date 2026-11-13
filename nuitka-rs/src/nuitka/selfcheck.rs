@@ -50,14 +50,19 @@ pub(crate) fn run<F: FnMut(&str)>(
 
     let mut command = Command::new(python);
     command
+        .env("PYTHONIOENCODING", "utf-8")
         .arg("-m")
         .arg("nuitka")
         .arg("--onefile")
         .arg("--assume-yes-for-downloads")
         .arg("--windows-console-mode=force")
         .arg(format!("--output-dir={}", workspace.display()))
-        .arg("--output-filename=selfcheck")
-        .arg(&script);
+        .arg("--output-filename=selfcheck");
+    if let Some(tool) = tool {
+        // 和真正打包用同一套后端参数，否则自检通过、真打包失败
+        command.args(&tool.nuitka_args);
+    }
+    command.arg(&script);
     if let Some(tool) = tool {
         tool.apply(&mut command);
     }

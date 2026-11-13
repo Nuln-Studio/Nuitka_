@@ -1,5 +1,6 @@
 mod env_check;
 pub(crate) mod bootstrap;
+pub(crate) mod build;
 pub(crate) mod diagnostics;
 pub(crate) mod dialog;
 pub(crate) mod fetch;
@@ -37,6 +38,8 @@ pub(crate) struct EnvStatus {
     pub python_path: String,
     pub nuitka: String,
     pub compiler: String,
+    /// "msvc" 或 "gcc"，打包时要据此告诉 Nuitka 用哪个后端
+    pub compiler_kind: String,
     pub hint: String,
 }
 
@@ -124,6 +127,14 @@ pub(crate) fn status() -> EnvStatus {
         python_path,
         nuitka: nuitka_text,
         compiler: compiler_text,
+        compiler_kind: if let Some(item) = msvc {
+            // 带上版本号：Nuitka 的 --msvc=latest 认不出新版本 VS，写死版本反而能过
+            format!("msvc:{}.{}", item.toolset.major, item.toolset.minor)
+        } else if gcc.is_some() {
+            "gcc".to_string()
+        } else {
+            String::new()
+        },
         hint,
     }
 }

@@ -14,6 +14,7 @@
     python: '',
     pythonPath: '',
     ready: false,
+    compiler: '',
     script: '',
     outDir: '',
     name: '',
@@ -27,6 +28,10 @@
 
   let mode = 'enter';
   let reportLoaded = false;
+  let building = false;
+  let previewTimer = null;
+  let ticker = null;
+  let startedAt = 0;
 
   /* ---------------- 通用 ---------------- */
 
@@ -41,10 +46,6 @@
   function baseName(path) {
     const parts = path.split(/[\\/]/);
     return parts[parts.length - 1] || path;
-  }
-
-  function quote(value) {
-    return '"' + String(value).replace(/"/g, '\\"') + '"';
   }
 
   /* ---------------- 启动向导 ---------------- */
@@ -148,6 +149,7 @@
       state.python = status.python || '';
       state.pythonPath = status.python_path || '';
       state.ready = !!status.ready;
+      state.compiler = status.compiler_kind || '';
       $('envDot').className = 'env-dot ' + levelClass(status.level);
       let text = [status.python, status.nuitka, status.compiler].join(' · ');
       if (status.ready && !status.verified) text += ' · 未跑编译自检';
@@ -183,60 +185,160 @@
     }
   }
 
+  /* ---------------- 页面切换 ---------------- */
+
+  function showPage(name) {
+    $('pageConfig').classList.toggle('hidden', name !== 'config');
+    $('pageBuild').classList.toggle('hidden', name !== 'build');
+  }
+
+  let gaugeTarget = 0;
+  let gaugeShown = 0;
+  let gaugeRaf = null;
+  let gaugeCreep = null;
+  let gaugeRunning = false;
+
+  function renderGauge(value) {
+    const clamped = Math.max(0, Math.min(100, value));
+    $('gaugeBar').style.strokeDashoffset = String(377 * (1 - clamped / 100));
+    $('gaugePercent').textContent = String(Math.round(clamped));
+  }
+
+  // 逐帧追目标值：目标是单调的，画面就是平滑的
+  function tickGauge() {
+    const diff = gaugeTarget - gaugeShown;
+    if (Math.abs(diff) < 0.1) {
+      gaugeShown = gaugeTarget;
+    } else {
+      gaugeShown += diff * 0.09 + (diff > 0 ? 0.05 : -0.05);
+    }
+    renderGauge(gaugeShown);
+    if (gaugeRunning || Math.abs(gaugeTarget - gaugeShown) > 0.05) {
+      gaugeRaf = requestAnimationFrame(tickGauge);
+    } else {
+      gaugeRaf = null;
+    }
+  }
+
+  function startGaugeLoop() {
+    if (!gaugeRaf) gaugeRaf = requestAnimationFrame(tickGauge);
+  }
+
+  function raiseGauge(percent) {
+    if (typeof percent !== 'number' || !isFinite(percent)) return;
+    // 只升不降：Nuitka 会把模块计数重来一遍，倒退的数值直接丢掉
+    gaugeTarget = Math.max(gaugeTarget, percent);
+    startGaugeLoop();
+  }
+
+  function resetGauge() {
+    gaugeRunning = false;
+    gaugeTarget = 0;
+    gaugeShown = 0;
+    renderGauge(0);
+  }
+
+  // 卡在某个阶段时慢慢往前挪，别让进度条像死了一样停住
+  function beginGaugeCreep() {
+    stopGaugeCreep();
+    gaugeCreep = setInterval(function () {
+      if (!gaugeRunning || gaugeTarget >= 96) return;
+      gaugeTarget = Math.min(96, gaugeTarget + 0.4);
+      startGaugeLoop();
+    }, 700);
+  }
+
+  function stopGaugeCreep() {
+    if (gaugeCreep) {
+      clearInterval(gaugeCreep);
+      gaugeCreep = null;
+    }
+  }
+
+  function setGaugeState(kind) {
+    const gauge = document.querySelector('.gauge');
+    gauge.className = 'gauge' + (kind ? ' ' + kind : '');
+  }
+
+  function setStage(text) {
+    if (typeof text === 'string' && text) $('buildStage').textContent = text;
+  }
+
+  function setMeta(text) {
+    $('buildMeta').textContent = text || '';
+  }
+
+  /* ---------------- 弹窗 ---------------- */
+
+  function showModal(title, body) {
+    $('modalTitle').textContent = title;
+    $('modalBody').textContent = body;
+    $('modalLayer').classList.remove('hidden');
+  }
+
+  function hideModal() {
+    $('modalLayer').classList.add('hidden');
+  }
+
   /* ---------------- 主界面：表单 ---------------- */
 
-  function commandText() {
-    if (!state.script) return '';
-    const parts = [];
-    parts.push(quote(state.pythonPath || 'python'));
-    parts.push('-m nuitka');
-    parts.push(state.mode === 'onefile' ? '--onefile' : '--standalone');
-    parts.push('--windows-console-mode=' + state.console);
-    if (state.progress) parts.push('--show-progress');
-    if (state.download) parts.push('--assume-yes-for-downloads');
-    if (state.outDir) parts.push('--output-dir=' + quote(state.outDir));
-    if (state.name) parts.push('--output-filename=' + quote(state.name));
-    if (state.icon) parts.push('--windows-icon-from-ico=' + quote(state.icon));
-    const extra = state.extra.trim();
-    if (extra) parts.push(extra);
-    parts.push(quote(state.script));
-    return parts.join(' ');
+  function request() {
+    return {
+      python: state.pythonPath,
+      script: state.script,
+      out_dir: state.outDir,
+      name: state.name,
+      icon: state.icon,
+      onefile: state.mode === 'onefile',
+      console: state.console === 'force',
+      show_progress: state.progress,
+      download: state.download,
+      compiler: state.compiler,
+      extra: state.extra
+    };
+  }
+
+  function canBuild() {
+    return !!(state.script && state.pythonPath && state.ready);
   }
 
   function update() {
     $('scriptName').textContent = state.script ? baseName(state.script) : '未选择';
     $('scriptPath').textContent = state.script || '';
+    $('scriptPath').title = state.script || '';
     $('outPath').textContent = state.outDir || '未选择';
+    $('outPath').title = state.outDir || '';
     $('iconPath').textContent = state.icon ? baseName(state.icon) : '未选择';
     $('iconPath').title = state.icon || '';
 
-    const command = commandText();
-    $('cmdText').textContent = command || '选择入口脚本后，这里会生成等价的 Nuitka 命令行。';
-
-    const status = $('statusText');
-    if (!state.script) {
-      status.textContent = '尚未选择入口脚本';
-    } else if (!state.ready) {
-      status.textContent = '环境不完整，请返回向导准备环境';
-    } else if (!state.outDir) {
-      status.textContent = '还没有选择输出目录';
-    } else {
-      status.textContent = '命令已生成，可复制后手动执行；一键打包将随 M2 接通';
+    if (!building) {
+      const status = $('statusText');
+      if (!state.script) status.textContent = '尚未选择入口脚本';
+      else if (!state.ready) status.textContent = '环境不完整，请返回向导准备环境';
+      else if (!state.outDir) status.textContent = '还没有选择输出目录';
+      else status.textContent = '就绪，可以开始打包';
     }
 
-    const canBuild = state.script && state.ready && state.outDir;
-    $('startBuild').disabled = true;
-    $('startBuild').title = canBuild
-      ? '打包后端尚未接通（M2）'
-      : '请先选择脚本、输出目录，并确认环境完整';
-    $('startBuild').dataset.ready = canBuild ? '1' : '';
+    $('startBuild').disabled = building || !canBuild();
+    $('resetForm').disabled = building;
+    $('copyCmd').disabled = building;
+
+    const hint = $('targetHint');
+    if (state.script && state.outDir) {
+      const stem = (state.script.split(/[\\/]/).pop() || '').replace(/\.py$/i, '');
+      const name = state.name || stem;
+      const target = state.mode === 'onefile' ? name + '.exe' : name + '.dist\\';
+      hint.textContent = '将生成：' + state.outDir.replace(/[\\/]+$/, '') + '\\' + target;
+    } else {
+      hint.textContent = '';
+    }
   }
 
   function bindSegmented(id, key) {
     const group = $(id);
     group.addEventListener('click', function (event) {
       const button = event.target.closest('button');
-      if (!button) return;
+      if (!button || building) return;
       state[key] = button.dataset.value;
       Array.prototype.forEach.call(group.children, function (child) {
         child.classList.toggle('on', child === button);
@@ -245,9 +347,95 @@
     });
   }
 
+  /* ---------------- 打包 ---------------- */
+
+  function startTicker() {
+    stopTicker();
+    startedAt = Date.now();
+    ticker = setInterval(function () {
+      setMeta('已用时 ' + Math.round((Date.now() - startedAt) / 1000) + ' 秒');
+    }, 1000);
+    setMeta('已用时 0 秒');
+  }
+
+  function stopTicker() {
+    if (ticker) {
+      clearInterval(ticker);
+      ticker = null;
+    }
+  }
+
+  function finishBuild() {
+    building = false;
+    gaugeRunning = false;
+    stopGaugeCreep();
+    stopTicker();
+    $('cancelBuild').classList.add('hidden');
+    $('startBuild').disabled = !canBuild();
+    $('resetForm').disabled = false;
+    $('copyCmd').disabled = false;
+  }
+
+  async function startBuild() {
+    if (building) return;
+    if (!state.script) {
+      showModal('还差一步', '先选一个要打包的 Python 脚本。');
+      return;
+    }
+    if (!state.ready) {
+      showModal('环境还没准备好', '请回到启动向导，点「准备环境」把 Python 和编译器装好。');
+      return;
+    }
+    if (!state.outDir) {
+      showModal('还没选输出目录', '打包生成的 exe 需要一个地方存放。');
+      return;
+    }
+
+    building = true;
+    showPage('build');
+    setGaugeState('running');
+    resetGauge();
+    gaugeRunning = true;
+    beginGaugeCreep();
+    setStage('正在收集环境信息…');
+    startTicker();
+    $('cancelBuild').classList.remove('hidden');
+    $('openOut').classList.add('hidden');
+    $('buildAgain').classList.add('hidden');
+    $('startBuild').disabled = true;
+
+    try {
+      const result = await bridge.invoke('start_build', { request: request() });
+      if (result.ok) {
+        gaugeRunning = false;
+        raiseGauge(100);
+        setGaugeState('done');
+        setStage('打包完成');
+        setMeta(result.target + '（用时 ' + result.seconds + ' 秒）');
+        $('openOut').classList.remove('hidden');
+        $('buildAgain').classList.remove('hidden');
+      } else {
+        gaugeRunning = false;
+        setGaugeState('failed');
+        setStage('打包失败');
+        setMeta('');
+        showModal('打包失败', result.detail);
+      }
+    } catch (error) {
+      gaugeRunning = false;
+      setGaugeState('failed');
+      setStage('打包失败');
+      setMeta('');
+      showModal('打包失败', String(error));
+    } finally {
+      finishBuild();
+    }
+  }
+
   /* ---------------- 主界面：交互 ---------------- */
 
   $('pickScript').addEventListener('click', async function () {
+    if (building) return;
     const picked = await bridge.invoke('pick_script', { title: '选择要打包的 Python 脚本' });
     if (!picked) return;
     state.script = picked;
@@ -255,6 +443,7 @@
   });
 
   $('pickOut').addEventListener('click', async function () {
+    if (building) return;
     const picked = await bridge.invoke('pick_dir', { title: '选择输出目录' });
     if (!picked) return;
     state.outDir = picked;
@@ -262,6 +451,7 @@
   });
 
   $('pickIcon').addEventListener('click', async function () {
+    if (building) return;
     const picked = await bridge.invoke('pick_icon', { title: '选择程序图标' });
     if (!picked) return;
     state.icon = picked;
@@ -280,15 +470,14 @@
 
   $('optProgress').addEventListener('change', function (event) {
     state.progress = event.target.checked;
-    update();
   });
 
   $('optDownload').addEventListener('change', function (event) {
     state.download = event.target.checked;
-    update();
   });
 
   $('resetForm').addEventListener('click', function () {
+    if (building) return;
     state.script = '';
     state.outDir = '';
     state.name = '';
@@ -312,8 +501,13 @@
   });
 
   $('copyCmd').addEventListener('click', async function () {
-    const text = commandText();
-    if (!text) return;
+    if (!state.script) return;
+    let text = '';
+    try {
+      text = await bridge.invoke('preview_command', { request: request() });
+    } catch (error) {
+      return;
+    }
     let copied = false;
     try {
       await navigator.clipboard.writeText(text);
@@ -330,7 +524,46 @@
     }
     const button = $('copyCmd');
     button.textContent = copied ? '已复制' : '复制失败';
-    setTimeout(function () { button.textContent = '复制'; }, 1400);
+    setTimeout(function () { button.textContent = '复制命令'; }, 1400);
+  });
+
+  $('startBuild').addEventListener('click', startBuild);
+
+  $('cancelBuild').addEventListener('click', async function () {
+    setStage('正在取消…');
+    try {
+      await bridge.invoke('cancel_build');
+    } catch (error) {
+      setStage('取消失败');
+    }
+  });
+
+  $('openOut').addEventListener('click', function () {
+    if (state.outDir) bridge.invoke('open_path', { path: state.outDir });
+  });
+
+  $('buildAgain').addEventListener('click', function () {
+    showPage('config');
+  });
+
+  $('modalClose').addEventListener('click', function () {
+    hideModal();
+    if (!building) showPage('config');
+  });
+
+  $('modalLog').addEventListener('click', async function () {
+    try {
+      await bridge.invoke('open_log');
+    } catch (error) {
+      $('modalBody').textContent = '打不开日志文件，详细信息见程序目录下的 nuitka-rs.log';
+    }
+  });
+
+  $('modalLayer').addEventListener('click', function (event) {
+    if (event.target === $('modalLayer')) {
+      hideModal();
+      if (!building) showPage('config');
+    }
   });
 
   $('rescan').addEventListener('click', function () {
@@ -339,10 +572,6 @@
   });
 
   $('envToggle').addEventListener('click', loadReport);
-
-  $('startBuild').addEventListener('click', function () {
-    $('statusText').textContent = '打包后端尚未接通，M2 完成后这里会直接开始编译';
-  });
 
   $('exportDiag').addEventListener('click', async function () {
     const button = $('exportDiag');
@@ -390,6 +619,7 @@
       document.body.classList.remove('wizard-mode');
       wizard.classList.add('hidden');
       main.classList.remove('hidden');
+      showPage('config');
       update();
       loadEnv();
       return;
@@ -402,6 +632,15 @@
   });
 
   $('prepare').addEventListener('click', prepareEnv);
+
+  if (events) {
+    events.listen('build-progress', function (event) {
+      if (!building) return;
+      const payload = event.payload || {};
+      raiseGauge(payload.percent);
+      setStage(payload.stage);
+    });
+  }
 
   if (appWindow) {
     $('tb-min').addEventListener('click', function () { appWindow.minimize(); });

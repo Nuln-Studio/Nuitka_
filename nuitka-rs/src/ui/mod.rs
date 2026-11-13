@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::nuitka;
+use crate::nuitka::build;
 use crate::nuitka::{EnvStatus, Report};
 
 #[tauri::command]
@@ -95,6 +96,55 @@ async fn prepare_env(app: AppHandle, base: String) -> Result<EnvStatus, String> 
 }
 
 #[tauri::command]
+fn preview_command(request: build::Request) -> String {
+    build::command_line(&request)
+}
+
+#[tauri::command]
+async fn start_build(app: AppHandle, request: build::Request) -> Result<build::Outcome, String> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut tracker = build::Tracker::default();
+        build::run(&request, |line| {
+            // 界面不显示日志，但完整输出要落盘，出错时让用户去看
+            nuitka::log::write(line);
+            if let Some(progress) = tracker.feed(line) {
+                let _ = handle.emit("build-progress", progress);
+            }
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn open_log() -> Result<(), String> {
+    let path = nuitka::log::path().ok_or_else(|| "找不到日志文件位置".to_string())?;
+    if !path.is_file() {
+        return Err(format!("日志文件还没有生成：{}", path.display()));
+    }
+    std::process::Command::new("explorer.exe")
+        .arg(format!("/select,{}", path.display()))
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("无法打开日志：{error}"))
+}
+
+#[tauri::command]
+fn cancel_build() -> Result<(), String> {
+    build::cancel()
+}
+
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("无法打开目录：{error}"))
+}
+
+#[tauri::command]
 fn enter_main(window: tauri::Window) -> Result<(), String> {
     window
         .set_resizable(true)
@@ -126,6 +176,11 @@ pub fn run() {
             pick_script,
             pick_icon,
             export_diagnostics,
+            preview_command,
+            start_build,
+            cancel_build,
+            open_log,
+            open_path,
             prepare_env,
             enter_main
         ])

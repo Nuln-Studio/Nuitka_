@@ -53,12 +53,22 @@ pub(crate) fn prepare<F: FnMut(&str)>(
         let _ = fetch::run(&python, &["-m", "ensurepip", "--upgrade"]);
         let _ = fetch::run(&python, &["-m", "pip", "install", "--upgrade", "pip", "-i", MIRROR]);
 
-        progress("安装 Nuitka（清华镜像）");
+        progress("安装 Nuitka（含 onefile 压缩组件）");
         fetch::run(
             &python,
-            &["-m", "pip", "install", "--upgrade", "nuitka", "-i", MIRROR],
+            &[
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "nuitka[onefile]",
+                "-i",
+                MIRROR,
+            ],
         )?;
     }
+
+    ensure_zstandard(&python, &mut progress);
 
     let tool = toolchain::resolve(PYTHON_VERSION);
     let raw = if tool.is_some() {
@@ -192,6 +202,21 @@ fn candidates() -> Vec<(String, String)> {
 
 fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or(text).trim()
+}
+
+/// onefile 没有 zstandard 也能跑，只是不压缩、产物大一圈。装不上就算了。
+fn ensure_zstandard<F: FnMut(&str)>(python: &Path, progress: &mut F) {
+    if fetch::run(python, &["-c", "import zstandard"]).is_ok() {
+        return;
+    }
+    progress("补齐 onefile 压缩组件（zstandard）");
+    match fetch::run(
+        python,
+        &["-m", "pip", "install", "--upgrade", "zstandard", "-i", MIRROR],
+    ) {
+        Ok(_) => log::info("zstandard 已安装"),
+        Err(error) => log::error(&format!("zstandard 安装失败，onefile 将不压缩：{error}")),
+    }
 }
 
 fn mirror_asset() -> Result<(String, String), String> {

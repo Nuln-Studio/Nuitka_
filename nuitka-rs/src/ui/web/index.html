@@ -17,7 +17,6 @@
 </div>
 
 <header class="titlebar" data-tauri-drag-region id="titlebar" title="双击可最大化/还原">
-  <!-- 与 icons/128x128.png 同源：换图标后重新复制一份为 src/ui/web/app-icon.png -->
   <img class="tb-icon" src="app-icon.png" alt="" draggable="false" data-tauri-drag-region>
   <span class="tb-title" data-tauri-drag-region>Nuitka++</span>
   <span class="tb-spacer" data-tauri-drag-region></span>
@@ -80,72 +79,118 @@
   </div>
   <div class="env-report hidden" id="envReport"></div>
 
-  <div class="work">
-    <aside class="side">
-      <section class="card">
-        <h2>入口脚本</h2>
-        <button class="btn secondary block" id="pickScript">选择 .py 文件</button>
-        <p class="value" id="scriptName">未选择</p>
-        <p class="path" id="scriptPath"></p>
+  <div class="page" id="pageConfig">
+    <div class="page-inner">
+      <section class="group">
+        <h2>项目</h2>
+        <div class="field">
+          <span class="label">入口脚本</span>
+          <div class="control">
+            <button class="btn secondary small" id="pickScript">选择 .py</button>
+            <span class="value" id="scriptName">未选择</span>
+            <p class="path" id="scriptPath"></p>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">输出目录</span>
+          <div class="control">
+            <button class="btn secondary small" id="pickOut">选择文件夹</button>
+            <p class="path" id="outPath">未选择</p>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">程序名</span>
+          <div class="control">
+            <input class="input" id="appName" placeholder="默认与脚本同名" spellcheck="false">
+          </div>
+        </div>
       </section>
 
-      <section class="card">
-        <h2>输出目录</h2>
-        <button class="btn secondary block" id="pickOut">选择文件夹</button>
-        <p class="path" id="outPath">未选择</p>
-      </section>
-
-      <section class="card">
-        <h2>程序名</h2>
-        <input class="input" id="appName" placeholder="默认与脚本同名" spellcheck="false">
-        <p class="note">不带 .exe，也不要带路径</p>
-      </section>
-    </aside>
-
-    <div class="pane">
-      <section class="card">
+      <section class="group">
         <h2>编译选项</h2>
-        <div class="rows">
-          <div class="row">
-            <span class="label">输出形式</span>
+        <div class="field">
+          <span class="label">输出形式</span>
+          <div class="control">
             <div class="seg" id="modeSeg">
               <button data-value="onefile" class="on">单文件</button>
               <button data-value="standalone">单目录</button>
             </div>
           </div>
-          <div class="row">
-            <span class="label">控制台窗口</span>
+        </div>
+        <div class="field">
+          <span class="label">控制台窗口</span>
+          <div class="control">
             <div class="seg" id="consoleSeg">
               <button data-value="force" class="on">显示</button>
               <button data-value="disable">隐藏</button>
             </div>
           </div>
-          <label class="check"><input type="checkbox" id="optProgress" checked> 显示编译进度</label>
-          <label class="check"><input type="checkbox" id="optDownload" checked> 缺组件时允许自动下载</label>
-          <div class="row">
-            <span class="label">程序图标</span>
+        </div>
+        <div class="field">
+          <span class="label">程序图标</span>
+          <div class="control">
             <button class="btn secondary small" id="pickIcon">选择 .ico</button>
-            <span class="path inline" id="iconPath">未选择</span>
+            <span class="value" id="iconPath">未选择</span>
           </div>
-          <div class="row column">
-            <span class="label">附加参数</span>
+        </div>
+        <div class="field">
+          <span class="label">附加参数</span>
+          <div class="control">
             <input class="input" id="extraArgs" placeholder="例如 --include-data-dir=assets=assets" spellcheck="false">
+          </div>
+        </div>
+        <div class="field">
+          <span class="label"></span>
+          <div class="control checks">
+            <label class="check"><input type="checkbox" id="optProgress" checked> 显示编译进度</label>
+            <label class="check"><input type="checkbox" id="optDownload" checked> 缺组件时自动下载</label>
           </div>
         </div>
       </section>
 
-      <section class="card cmd">
-        <h2>命令预览<button class="link" id="copyCmd">复制</button></h2>
-        <pre id="cmdText">—</pre>
-      </section>
+      <p class="target-hint" id="targetHint"></p>
+    </div>
+
+    <div class="footerbar">
+      <span class="status" id="statusText">尚未选择入口脚本</span>
+      <span class="grow"></span>
+      <button class="link" id="copyCmd">复制命令</button>
+      <button class="btn secondary" id="resetForm">重置</button>
+      <button class="btn primary" id="startBuild" disabled>开始打包</button>
     </div>
   </div>
 
-  <div class="footerbar">
-    <span class="status" id="statusText">尚未选择入口脚本</span>
-    <span class="grow"></span>
-    <button class="btn secondary" id="resetForm">重置</button>
-    <button class="btn primary" id="startBuild" disabled>开始打包</button>
+  <div class="page hidden" id="pageBuild">
+    <div class="build-inner">
+      <div class="gauge">
+        <svg viewBox="0 0 140 140" aria-hidden="true">
+          <circle class="gauge-track" cx="70" cy="70" r="60"></circle>
+          <circle class="gauge-bar" id="gaugeBar" cx="70" cy="70" r="60"></circle>
+        </svg>
+        <div class="gauge-center">
+          <span id="gaugePercent">0</span><small>%</small>
+        </div>
+      </div>
+      <p class="build-stage" id="buildStage">正在准备…</p>
+      <p class="build-meta" id="buildMeta"></p>
+      <div class="build-actions">
+        <button class="btn secondary hidden" id="openOut">打开输出目录</button>
+        <button class="btn secondary hidden" id="buildAgain">再打一次</button>
+        <button class="btn danger" id="cancelBuild">取消打包</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-layer hidden" id="modalLayer">
+  <div class="modal">
+    <h3 id="modalTitle">打包失败</h3>
+    <p id="modalBody"></p>
+    <p class="modal-note">完整日志在程序目录下的 nuitka-rs.log</p>
+    <div class="modal-actions">
+      <button class="btn secondary" id="modalLog">打开日志</button>
+      <button class="btn primary" id="modalClose">知道了</button>
+    </div>
   </div>
 </div>
 

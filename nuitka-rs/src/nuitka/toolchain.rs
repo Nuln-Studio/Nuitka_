@@ -18,6 +18,10 @@ pub(crate) struct Toolchain {
     pub env: Vec<(String, String)>,
     /// 覆盖 PATH 时用的值
     pub path: Option<String>,
+    /// 告诉 Nuitka 用哪个后端：不指定它会自己挑，Windows 上默认挑 MinGW
+    pub nuitka_args: Vec<String>,
+    /// 实际会被调用的编译器可执行文件
+    pub binary: Option<PathBuf>,
 }
 
 impl Toolchain {
@@ -34,6 +38,14 @@ impl Toolchain {
         match self.kind {
             Kind::Msvc => "MSVC",
             Kind::Gcc => "winlibs gcc",
+        }
+    }
+
+    /// 日志里用：认到的是哪个版本、最后会执行哪个 exe
+    pub(crate) fn describe(&self) -> String {
+        match &self.binary {
+            Some(binary) => format!("{}（{}）", self.label, binary.display()),
+            None => self.label.clone(),
         }
     }
 }
@@ -59,12 +71,26 @@ fn resolve_msvc(python: PyVersion) -> Option<Toolchain> {
         }
         match vcvars_environment(&script) {
             Ok(env) => {
-                log::info(&format!("使用 {label}，VC 环境来自 {}", script.display()));
+                let binary = find_in_path(&env, "cl.exe");
+                log::info(&format!(
+                    "使用 {label}，VC 环境来自 {}，cl.exe={}",
+                    script.display(),
+                    binary
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "未找到".to_string())
+                ));
                 return Some(Toolchain {
                     kind: Kind::Msvc,
                     label,
                     env,
                     path: None,
+                    // 版本写死：--msvc=latest 认不出新版本 VS，写死 14.50 反而能过
+                    nuitka_args: vec![format!(
+                        "--msvc={}.{}",
+                        msvc.toolset.major, msvc.toolset.minor
+                    )],
+                    binary,
                 });
             }
             Err(error) => {
@@ -91,19 +117,56 @@ fn resolve_gcc() -> Option<Toolchain> {
         label,
         env: Vec::new(),
         path: Some(path),
+        nuitka_args: vec!["--mingw64".to_string()],
+        binary: Some(gcc.path.clone()),
     })
 }
 
+/// MSVC 失败时的退路：Nuitka 自带缓存的 winlibs。
+pub(crate) fn fallback_gcc() -> Option<Toolchain> {
+    resolve_gcc()
+}
+
+/// 从 vcvars 给出的 PATH 里找出实际会被调用的那个编译器。
+fn find_in_path(env: &[(String, String)], exe: &str) -> Option<PathBuf> {
+    let path = env
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+        .map(|(_, value)| value.clone())?;
+
+    for dir in path.split(';') {
+        if dir.trim().is_empty() {
+            continue;
+        }
+        let candidate = Path::new(dir).join(exe);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// 运行 vcvars64.bat 并把结果环境抓下来。
+#[cfg(windows)]
 fn vcvars_environment(script: &Path) -> Result<Vec<(String, String)>, String> {
+    use std::os::windows::process::CommandExt;
+
+    // 必须用 raw_arg：cmd 不认 Rust 默认的引号转义，会把带空格的路径拆坏
     let command_line = format!("call \"{}\" >nul 2>&1 && set", script.display());
     let output = Command::new("cmd.exe")
-        .args(["/d", "/s", "/c", &command_line])
+        .args(["/d", "/s", "/c"])
+        .raw_arg(&command_line)
         .output()
         .map_err(|error| format!("无法启动 cmd.exe：{error}"))?;
 
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("cmd 退出码 {:?}", output.status.code())
+        } else {
+            stderr
+        };
+        return Err(detail);
     }
 
     let text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -116,6 +179,11 @@ fn vcvars_environment(script: &Path) -> Result<Vec<(String, String)>, String> {
     } else {
         Err("没有拿到 INCLUDE".to_string())
     }
+}
+
+#[cfg(not(windows))]
+fn vcvars_environment(_script: &Path) -> Result<Vec<(String, String)>, String> {
+    Err("只有 Windows 需要 VC 环境".to_string())
 }
 
 fn parse_environment(text: &str) -> Vec<(String, String)> {
@@ -192,6 +260,8 @@ LIB=C:\\SDK\\Lib;C:\\VC\\Lib
             label: "MSVC test".to_string(),
             env: vec![("INCLUDE".to_string(), "C:\\x".to_string())],
             path: Some("C:\\bin".to_string()),
+            nuitka_args: vec!["--msvc=14.50".to_string()],
+            binary: None,
         };
         let mut command = Command::new("cmd.exe");
         tool.apply(&mut command);
@@ -204,9 +274,49 @@ LIB=C:\\SDK\\Lib;C:\\VC\\Lib
                 )
             })
             .collect();
-        assert!(envs.iter().any(|(key, value)| key == "INCLUDE"
-            && value.as_deref() == Some("C:\\x")));
-        assert!(envs.iter().any(|(key, value)| key == "PATH"
-            && value.as_deref() == Some("C:\\bin")));
+        assert!(envs
+            .iter()
+            .any(|(key, value)| key == "INCLUDE" && value.as_deref() == Some("C:\\x")));
+        assert!(envs
+            .iter()
+            .any(|(key, value)| key == "PATH" && value.as_deref() == Some("C:\\bin")));
+    }
+
+    /// 排查用：`cargo test diag_print_toolchain -- --ignored --nocapture`
+    #[test]
+    #[ignore = "诊断用，打印本机的编译器探测结果"]
+    fn diag_print_toolchain() {
+        use super::scangcc;
+        use super::scanmsvc;
+
+        println!("roots: {:?}", scanmsvc::roots());
+        let toolsets: Vec<String> = scanmsvc::scan()
+            .iter()
+            .map(|item| format!("{} [{}] sdk={} env={}", item.toolset, item.install, item.sdk, item.env_ready))
+            .collect();
+        println!("msvc: {toolsets:?}");
+        let gccs: Vec<String> = scangcc::scan()
+            .iter()
+            .map(|item| format!("{} {} -> {}", item.version, item.path.display(), item.status().label()))
+            .collect();
+        println!("gcc: {gccs:?}");
+        let tool = resolve(PyVersion::new(3, 12, 16));
+        println!("resolved: {:?}", tool.as_ref().map(|item| item.label.clone()));
+        for root in scanmsvc::roots() {
+            let script = root
+                .join("VC")
+                .join("Auxiliary")
+                .join("Build")
+                .join("vcvars64.bat");
+            println!("script {} exists={}", script.display(), script.is_file());
+            match vcvars_environment(&script) {
+                Ok(env) => println!("  env ok, {} vars", env.len()),
+                Err(error) => println!("  env error: {error}"),
+            }
+        }
+        if let Some(tool) = &tool {
+            println!("kind: {}", tool.kind_label());
+            println!("has INCLUDE: {}", tool.env.iter().any(|(key, _)| key == "INCLUDE"));
+        }
     }
 }
