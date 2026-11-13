@@ -9,7 +9,7 @@ fn describe(output: &std::process::Output) -> String {
 }
 
 fn curl() -> Command {
-    Command::new("curl.exe")
+    crate::util::command("curl.exe")
 }
 
 /// 用系统 curl 下载；`-C -` 支持断点续传，`-L` 跟随 GitHub 的跳转。
@@ -56,7 +56,7 @@ pub(crate) fn download_checked(url: &str, dest: &Path, expected: Option<&str>) -
 
 /// 压缩包完整性：能列出清单就说明没被截断。
 pub(crate) fn verify_archive(archive: &Path) -> Result<(), String> {
-    let output = Command::new("tar.exe")
+    let output = crate::util::command("tar.exe")
         .arg("-tzf")
         .arg(archive)
         .output()
@@ -71,7 +71,7 @@ pub(crate) fn verify_archive(archive: &Path) -> Result<(), String> {
 
 /// 用系统 certutil 算 SHA256，省得引第三方库。
 pub(crate) fn sha256(path: &Path) -> Result<String, String> {
-    let output = Command::new("certutil.exe")
+    let output = crate::util::command("certutil.exe")
         .arg("-hashfile")
         .arg(path)
         .arg("SHA256")
@@ -140,7 +140,7 @@ pub(crate) fn install(archive: &Path, target: &Path) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|error| format!("创建临时目录失败：{error}"))?;
 
-    let output = Command::new("tar.exe")
+    let output = crate::util::command("tar.exe")
         .arg("-xf")
         .arg(archive)
         .arg("-C")
@@ -182,7 +182,7 @@ pub(crate) fn run_with_env(
     args: &[&str],
     envs: &[(&str, &Path)],
 ) -> Result<String, String> {
-    let mut command = Command::new(program);
+    let mut command = crate::util::command(program);
     command.args(args);
     for (key, value) in envs {
         command.env(key, value);

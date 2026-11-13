@@ -153,7 +153,7 @@ fn vcvars_environment(script: &Path) -> Result<Vec<(String, String)>, String> {
 
     // 必须用 raw_arg：cmd 不认 Rust 默认的引号转义，会把带空格的路径拆坏
     let command_line = format!("call \"{}\" >nul 2>&1 && set", script.display());
-    let output = Command::new("cmd.exe")
+    let output = crate::util::command("cmd.exe")
         .args(["/d", "/s", "/c"])
         .raw_arg(&command_line)
         .output()

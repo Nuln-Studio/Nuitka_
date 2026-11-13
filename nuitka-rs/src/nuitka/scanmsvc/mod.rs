@@ -3,7 +3,6 @@ use std::env;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use super::python_discovery::PyVersion;
 
@@ -177,7 +176,7 @@ pub fn environment_ready() -> bool {
 fn installs() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(where_exe) = vswhere()
-        && let Ok(output) = Command::new(where_exe)
+        && let Ok(output) = crate::util::command(where_exe)
             .args([
                 "-products",
                 "*",

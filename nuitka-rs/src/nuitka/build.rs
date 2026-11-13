@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Mutex;
 use std::sync::mpsc::{Sender, channel};
 use std::time::Instant;
@@ -149,7 +149,7 @@ fn target_of(request: &Request, out_dir: &Path) -> Option<PathBuf> {
 }
 
 fn python_version(python: &Path) -> Option<PyVersion> {
-    let output = Command::new(python)
+    let output = crate::util::command(python)
         .args(["-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])"])
         .output()
         .ok()?;
@@ -345,7 +345,7 @@ fn execute(
     tool: Option<&toolchain::Toolchain>,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<(bool, String), String> {
-    let mut command = Command::new(python);
+    let mut command = crate::util::command(python);
     command
         .args(args)
         .stdin(Stdio::null())
@@ -445,7 +445,7 @@ pub(crate) fn cancel() -> Result<(), String> {    let pid = RUNNING
         .and_then(|mut slot| slot.take())
         .ok_or_else(|| "当前没有正在进行的打包".to_string())?;
 
-    let status = Command::new("taskkill.exe")
+    let status = crate::util::command("taskkill.exe")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())

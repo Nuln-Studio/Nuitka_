@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::nuitka::python_discovery::PyVersion;
 use crate::nuitka::{fetch, lock, log, paths, selfcheck, toolchain};
@@ -281,7 +280,7 @@ fn github_asset() -> Result<(String, String), String> {
 }
 
 fn curl_text(url: &str) -> Result<String, String> {
-    let output = Command::new("curl.exe")
+    let output = crate::util::command("curl.exe")
         .arg("-L")
         .arg("--fail")
         .arg("--silent")

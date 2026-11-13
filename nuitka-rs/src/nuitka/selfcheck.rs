@@ -48,7 +48,7 @@ pub(crate) fn run<F: FnMut(&str)>(
     log::info(&format!("编译自检开始，编译器：{compiler}"));
     progress("编译自检：用 Nuitka 打一个最小程序（首次会慢一些）");
 
-    let mut command = Command::new(python);
+    let mut command = crate::util::command(python);
     command
         .env("PYTHONIOENCODING", "utf-8")
         .arg("-m")
@@ -82,7 +82,7 @@ pub(crate) fn run<F: FnMut(&str)>(
 
     progress("编译自检：运行生成的程序");
     let run_log = workspace.join("run.log");
-    let verify = Command::new(&exe);
+    let verify = crate::util::command(&exe);
     match run_timed(verify, &run_log, RUN_LIMIT) {
         Ok(()) => {
             let text = std::fs::read_to_string(&run_log).unwrap_or_default();

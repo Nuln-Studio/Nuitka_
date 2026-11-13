@@ -156,7 +156,16 @@ fn enter_main(window: tauri::Window) -> Result<(), String> {
     Ok(())
 }
 
+/// GUI 模式下没有控制台，panic 默认什么都看不到，至少留条记录到日志里。
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        nuitka::log::error(&format!("未处理的 panic：{info}"));
+    }));
+}
+
 pub fn run() {
+    install_panic_hook();
+
     if !nuitka::instance::acquire() {
         nuitka::instance::notify_already_running();
         return;
