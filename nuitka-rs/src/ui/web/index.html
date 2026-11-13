@@ -3,14 +3,37 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Nuitka++</title>
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="wizard-mode">
+
+<div class="scene" aria-hidden="true">
+  <span class="blob blob-a"></span>
+  <span class="blob blob-b"></span>
+  <span class="blob blob-c"></span>
+  <span class="grid"></span>
+</div>
+
+<header class="titlebar" data-tauri-drag-region id="titlebar" title="双击可最大化/还原">
+  <!-- 与 icons/128x128.png 同源：换图标后重新复制一份为 src/ui/web/app-icon.png -->
+  <img class="tb-icon" src="app-icon.png" alt="" draggable="false" data-tauri-drag-region>
+  <span class="tb-title" data-tauri-drag-region>Nuitka++</span>
+  <span class="tb-spacer" data-tauri-drag-region></span>
+  <button class="tb-btn" id="tb-min" title="最小化" aria-label="最小化">
+    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 5h6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+  </button>
+  <button class="tb-btn" id="tb-max" title="最大化" aria-label="最大化">
+    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="2.3" y="2.3" width="5.4" height="5.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+  </button>
+  <button class="tb-btn close" id="tb-close" title="关闭" aria-label="关闭">
+    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2.4 2.4l5.2 5.2M7.6 2.4L2.4 7.6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+  </button>
+</header>
 
 <div id="wizard" class="wizard">
   <div class="wizard-head">
-    <div class="app-mark">N</div>
     <div class="wizard-title">
       <h1>Nuitka++</h1>
       <p class="caption">可视化 Nuitka 打包工具</p>
@@ -47,32 +70,83 @@
 </div>
 
 <div id="main" class="hidden">
-  <header class="commandbar">
-    <div class="commandbar-title">
-      <span class="app-mark small">N</span>
-      <span>Nuitka++</span>
-    </div>
-    <button class="btn secondary" id="rescan">重新扫描</button>
-  </header>
+  <div class="envbar">
+    <span class="env-dot" id="envDot"></span>
+    <span class="env-text" id="envText">正在检测环境…</span>
+    <span class="grow"></span>
+    <button class="link" id="exportDiag">导出诊断</button>
+    <button class="link" id="envToggle">详情</button>
+    <button class="btn ghost" id="rescan">重新检测</button>
+  </div>
+  <div class="env-report hidden" id="envReport"></div>
 
-  <main class="workspace">
-    <section class="panel">
-      <h2>Python</h2>
-      <pre id="rPython">—</pre>
-    </section>
-    <section class="panel">
-      <h2>Nuitka</h2>
-      <pre id="rNuitka">—</pre>
-    </section>
-    <section class="panel wide">
-      <h2>编译器</h2>
-      <pre id="rCompilers">—</pre>
-    </section>
-    <section class="panel wide accent">
-      <h2>推荐</h2>
-      <p id="rRec">—</p>
-    </section>
-  </main>
+  <div class="work">
+    <aside class="side">
+      <section class="card">
+        <h2>入口脚本</h2>
+        <button class="btn secondary block" id="pickScript">选择 .py 文件</button>
+        <p class="value" id="scriptName">未选择</p>
+        <p class="path" id="scriptPath"></p>
+      </section>
+
+      <section class="card">
+        <h2>输出目录</h2>
+        <button class="btn secondary block" id="pickOut">选择文件夹</button>
+        <p class="path" id="outPath">未选择</p>
+      </section>
+
+      <section class="card">
+        <h2>程序名</h2>
+        <input class="input" id="appName" placeholder="默认与脚本同名" spellcheck="false">
+        <p class="note">不带 .exe，也不要带路径</p>
+      </section>
+    </aside>
+
+    <div class="pane">
+      <section class="card">
+        <h2>编译选项</h2>
+        <div class="rows">
+          <div class="row">
+            <span class="label">输出形式</span>
+            <div class="seg" id="modeSeg">
+              <button data-value="onefile" class="on">单文件</button>
+              <button data-value="standalone">单目录</button>
+            </div>
+          </div>
+          <div class="row">
+            <span class="label">控制台窗口</span>
+            <div class="seg" id="consoleSeg">
+              <button data-value="force" class="on">显示</button>
+              <button data-value="disable">隐藏</button>
+            </div>
+          </div>
+          <label class="check"><input type="checkbox" id="optProgress" checked> 显示编译进度</label>
+          <label class="check"><input type="checkbox" id="optDownload" checked> 缺组件时允许自动下载</label>
+          <div class="row">
+            <span class="label">程序图标</span>
+            <button class="btn secondary small" id="pickIcon">选择 .ico</button>
+            <span class="path inline" id="iconPath">未选择</span>
+          </div>
+          <div class="row column">
+            <span class="label">附加参数</span>
+            <input class="input" id="extraArgs" placeholder="例如 --include-data-dir=assets=assets" spellcheck="false">
+          </div>
+        </div>
+      </section>
+
+      <section class="card cmd">
+        <h2>命令预览<button class="link" id="copyCmd">复制</button></h2>
+        <pre id="cmdText">—</pre>
+      </section>
+    </div>
+  </div>
+
+  <div class="footerbar">
+    <span class="status" id="statusText">尚未选择入口脚本</span>
+    <span class="grow"></span>
+    <button class="btn secondary" id="resetForm">重置</button>
+    <button class="btn primary" id="startBuild" disabled>开始打包</button>
+  </div>
 </div>
 
 <script src="app.js"></script>
