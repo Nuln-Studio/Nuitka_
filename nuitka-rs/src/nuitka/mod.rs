@@ -1,12 +1,18 @@
 mod env_check;
 pub(crate) mod bootstrap;
+pub(crate) mod diagnostics;
 pub(crate) mod dialog;
 pub(crate) mod fetch;
+pub(crate) mod instance;
+pub(crate) mod lock;
+pub(crate) mod log;
 pub(crate) mod paths;
 pub(crate) mod python_discovery;
 pub(crate) mod scangcc;
 pub(crate) mod scanmsvc;
 pub(crate) mod scannuitka;
+pub(crate) mod selfcheck;
+pub(crate) mod toolchain;
 
 use crate::error::PythonCandidate;
 use crate::error::Result;
@@ -19,6 +25,107 @@ pub(crate) struct Report {
     pub nuitka: String,
     pub compilers: String,
     pub recommendation: String,
+    pub selfcheck: String,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct EnvStatus {
+    pub ready: bool,
+    pub verified: bool,
+    pub level: String,
+    pub python: String,
+    pub python_path: String,
+    pub nuitka: String,
+    pub compiler: String,
+    pub hint: String,
+}
+
+fn shorten(text: &str, limit: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= limit {
+        return trimmed.to_string();
+    }
+    let mut out: String = trimmed.chars().take(limit).collect();
+    out.push('…');
+    out
+}
+
+/// 启动向导用的精简状态：只给结论，不给日志。
+pub(crate) fn status() -> EnvStatus {
+    let python = select_python();
+    let nuitkas = select_nuitka();
+    let python_version = nuitkas.first().map(|item| item.python_version);
+
+    let (python_text, python_path) = match &python {
+        Ok(item) => (
+            format!("Python {}", item.version),
+            item.path.display().to_string(),
+        ),
+        Err(_) => ("未找到可用的 Python".to_string(), String::new()),
+    };
+    let nuitka_text = match nuitkas.first() {
+        Some(item) => format!("Nuitka {}", item.version),
+        None => "未找到 Nuitka".to_string(),
+    };
+
+    let msvcs = scanmsvc::scan();
+    let gccs = scangcc::scan();
+    let msvc = python_version.and_then(|version| scanmsvc::best(&msvcs, version));
+    let gcc = scangcc::best(&gccs);
+    let compiler_text = msvc
+        .map(|item| format!("MSVC {}", item.toolset))
+        .or_else(|| gcc.map(|item| format!("gcc {}", item.version)))
+        .unwrap_or_else(|| "未找到可用的编译器".to_string());
+
+    let has_python = python.is_ok();
+    let has_nuitka = !nuitkas.is_empty();
+    let has_compiler = msvc.is_some() || gcc.is_some();
+    let recommended = python
+        .as_ref()
+        .map(|item| env_check::is_recommended(item))
+        .unwrap_or(false);
+
+    let check = paths::base().and_then(|base| selfcheck::load(&base));
+    let verified = check.as_ref().map(|item| item.ok).unwrap_or(false);
+
+    let (ready, level, hint) = if has_python && has_nuitka && has_compiler {
+        if verified && recommended {
+            (true, "优秀", "编译自检通过，可以直接开始打包。".to_string())
+        } else if verified {
+            (true, "可用", "可以打包，但建议换用 3.11 以上的 Python。".to_string())
+        } else {
+            let hint = match check.as_ref() {
+                Some(outcome) if !outcome.detail.trim().is_empty() => {
+                    format!("上次编译自检未通过：{}", shorten(&outcome.detail, 80))
+                }
+                _ => "还没跑过编译自检，建议点「准备环境」验证一次。".to_string(),
+            };
+            (true, "待验证", hint)
+        }
+    } else if has_python && has_nuitka {
+        (
+            false,
+            "待完善",
+            "还差一个可用的编译器，建议先准备环境。".to_string(),
+        )
+    } else {
+        (
+            false,
+            "需要准备",
+            "缺少 Python 或 Nuitka，建议先准备环境。".to_string(),
+        )
+    };
+
+    EnvStatus {
+        ready,
+        verified,
+        level: level.to_string(),
+        python: python_text,
+        python_path,
+        nuitka: nuitka_text,
+        compiler: compiler_text,
+        hint,
+    }
 }
 
 pub(crate) fn select_python() -> Result<PythonCandidate> {
@@ -56,11 +163,21 @@ pub(crate) fn report() -> Report {
     };
     let python_version = nuitkas.first().map(|item| item.python_version);
     let (compilers, recommendation) = compiler_sections(python_version);
+    let selfcheck_text = match paths::base().and_then(|base| selfcheck::load(&base)) {
+        Some(outcome) => format!(
+            "{}，编译器 {}，详情：{}",
+            if outcome.ok { "通过" } else { "未通过" },
+            outcome.compiler,
+            outcome.detail
+        ),
+        None => "还没有跑过编译自检".to_string(),
+    };
     Report {
         python,
         nuitka,
         compilers,
         recommendation,
+        selfcheck: selfcheck_text,
     }
 }
 

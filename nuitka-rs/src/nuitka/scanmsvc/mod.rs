@@ -158,6 +158,11 @@ pub fn scan() -> Vec<Msvc> {
     out
 }
 
+/// Visual Studio 的安装根目录，工具链解析（vcvars64.bat）要用。
+pub fn roots() -> Vec<PathBuf> {
+    installs()
+}
+
 pub fn environment_ready() -> bool {
     for name in ["VCINSTALLDIR", "VSCMD_VER", "VSCMD_ARG_TGT_ARCH"] {
         if env::var_os(name).is_some_and(|value| !value.is_empty()) {

@@ -110,8 +110,10 @@ impl Provider for KnownDirectorySource {
         if let Some(local) = var_path("LOCALAPPDATA") {
             push_children(out, &local.join("Programs").join("Python"));
             push_prefixed_children(out, &local.join("Python"), "pythoncore-");
-            // 向导自己下载的便携环境：%LOCALAPPDATA%\Nuitka++\python\<版本>\python.exe
-            push_children(out, &local.join("Nuitka++").join("python"));
+            // 向导自己下载的便携环境：<安装目录>\python\<版本>\python.exe
+            if let Some(private) = crate::nuitka::paths::python_dir() {
+                push_children(out, &private);
+            }
             for name in ["miniconda3", "anaconda3"] {
                 push_exe(out, &local.join(name));
                 push_children(out, &local.join(name).join("envs"));

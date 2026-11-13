@@ -1,16 +1,42 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// 向导自己的私有目录：%LOCALAPPDATA%\Nuitka++
+/// 固定私有目录：%LOCALAPPDATA%\Nuitka++
 pub(crate) fn private_root() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("Nuitka++"))
 }
 
-/// 便携 Python 的安装根：%LOCALAPPDATA%\Nuitka++\python\<版本>\
-pub(crate) fn python_dir() -> Option<PathBuf> {
-    private_root().map(|root| root.join("python"))
+pub(crate) fn config_file() -> Option<PathBuf> {
+    private_root().map(|root| root.join("config.json"))
 }
 
-/// 下载缓存：%LOCALAPPDATA%\Nuitka++\downloads\
-pub(crate) fn downloads_dir() -> Option<PathBuf> {
-    private_root().map(|root| root.join("downloads"))
+/// 用户选择的安装根目录；没选过就用默认私有目录。
+pub(crate) fn base() -> Option<PathBuf> {
+    if let Some(file) = config_file() {
+        if let Ok(text) = std::fs::read_to_string(&file) {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(dir) = value.get("install_dir").and_then(|item| item.as_str()) {
+                    if !dir.trim().is_empty() {
+                        return Some(PathBuf::from(dir));
+                    }
+                }
+            }
+        }
+    }
+    private_root()
+}
+
+pub(crate) fn python_dir() -> Option<PathBuf> {
+    base().map(|root| root.join("python"))
+}
+
+pub(crate) fn set_base(dir: &Path) -> Result<(), String> {
+    let file = config_file().ok_or_else(|| "找不到 LOCALAPPDATA".to_string())?;
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| format!("创建配置目录失败：{error}"))?;
+    }
+    let text = format!(
+        "{{\n  \"install_dir\": {}\n}}\n",
+        serde_json::to_string(&dir.to_string_lossy().to_string()).unwrap_or_else(|_| "\"\"".into())
+    );
+    std::fs::write(&file, text).map_err(|error| format!("写入配置失败：{error}"))
 }
