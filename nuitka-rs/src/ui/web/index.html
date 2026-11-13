@@ -43,6 +43,8 @@
     cursor: pointer;
   }
   button:disabled { opacity: .5; cursor: default; }
+  .actions { display: flex; gap: 8px; }
+  button.ghost { background: #2a2f3a; color: #e6e9ef; }
   main {
     flex: 1;
     overflow: auto;
@@ -93,7 +95,10 @@
 <body>
   <header>
     <h1>Nuitka<span>++</span></h1>
-    <button id="refresh">重新扫描</button>
+    <div class="actions">
+      <button id="prepare" class="ghost">准备环境</button>
+      <button id="refresh">重新扫描</button>
+    </div>
   </header>
   <main>
     <section class="card">
@@ -107,6 +112,10 @@
     <section class="card wide">
       <h2>编译器</h2>
       <pre id="compilers">扫描中…</pre>
+    </section>
+    <section class="card wide">
+      <h2>环境（M1）</h2>
+      <pre id="env">尚未准备。点右上角「准备环境」，会下载便携 Python 并安装 Nuitka。</pre>
     </section>
     <section class="verdict">
       <span>推荐</span>
@@ -133,7 +142,7 @@
         fields[key].textContent = '扫描中…';
       }
       try {
-        const data = JSON.parse(await bridge.invoke('scan'));
+        const data = await bridge.invoke('scan');
         fields.python.textContent = data.python || '—';
         fields.nuitka.textContent = data.nuitka || '—';
         fields.compilers.textContent = data.compilers || '—';
@@ -147,6 +156,31 @@
 
     button.addEventListener('click', refresh);
     window.addEventListener('DOMContentLoaded', refresh);
+
+    const env = document.getElementById('env');
+    const prepare = document.getElementById('prepare');
+    const events = window.__TAURI__ && window.__TAURI__.event;
+    if (events) {
+      events.listen('env-progress', (event) => {
+        env.textContent = event.payload;
+      });
+    }
+
+    prepare.addEventListener('click', async () => {
+      if (!bridge) {
+        env.textContent = '没有检测到 Tauri 环境，无法准备。';
+        return;
+      }
+      prepare.disabled = true;
+      env.textContent = '准备中…';
+      try {
+        env.textContent = await bridge.invoke('prepare_env');
+      } catch (error) {
+        env.textContent = '准备失败：' + error;
+      } finally {
+        prepare.disabled = false;
+      }
+    });
   </script>
 </body>
 </html>

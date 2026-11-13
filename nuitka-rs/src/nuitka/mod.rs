@@ -1,4 +1,7 @@
 mod env_check;
+pub(crate) mod bootstrap;
+pub(crate) mod fetch;
+pub(crate) mod paths;
 pub(crate) mod python_discovery;
 pub(crate) mod scangcc;
 pub(crate) mod scanmsvc;
@@ -9,6 +12,7 @@ use crate::error::Result;
 
 pub(crate) use scannuitka::{Nuitka, Requirement};
 
+#[derive(serde::Serialize)]
 pub(crate) struct Report {
     pub python: String,
     pub nuitka: String,

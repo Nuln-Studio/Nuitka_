@@ -110,6 +110,8 @@ impl Provider for KnownDirectorySource {
         if let Some(local) = var_path("LOCALAPPDATA") {
             push_children(out, &local.join("Programs").join("Python"));
             push_prefixed_children(out, &local.join("Python"), "pythoncore-");
+            // 向导自己下载的便携环境：%LOCALAPPDATA%\Nuitka++\python\<版本>\python.exe
+            push_children(out, &local.join("Nuitka++").join("python"));
             for name in ["miniconda3", "anaconda3"] {
                 push_exe(out, &local.join(name));
                 push_children(out, &local.join(name).join("envs"));
@@ -262,6 +264,21 @@ mod tests {
         let mut out = Vec::new();
         push_children(&mut out, &root);
         assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn finds_private_app_layout() {
+        let root = scratch("private");
+        touch(
+            &root
+                .join("Nuitka++")
+                .join("python")
+                .join("3.12.8")
+                .join(EXE_NAME),
+        );
+        let mut out = Vec::new();
+        push_children(&mut out, &root.join("Nuitka++").join("python"));
+        assert_eq!(out.len(), 1);
     }
 
     #[test]

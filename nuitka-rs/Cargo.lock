@@ -1844,6 +1844,8 @@ name = "nuitka-rs"
 version = "0.1.0"
 dependencies = [
  "semver",
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "thiserror 1.0.69",

@@ -1,40 +1,34 @@
+use tauri::{AppHandle, Emitter};
+
 use crate::nuitka;
+use crate::nuitka::Report;
 
 #[tauri::command]
-async fn scan() -> String {
-    tauri::async_runtime::spawn_blocking(|| {
-        let report = nuitka::report();
-        format!(
-            "{{\"python\":\"{}\",\"nuitka\":\"{}\",\"compilers\":\"{}\",\"recommendation\":\"{}\"}}",
-            escape(&report.python),
-            escape(&report.nuitka),
-            escape(&report.compilers),
-            escape(&report.recommendation)
-        )
+async fn scan() -> Result<Report, String> {
+    tauri::async_runtime::spawn_blocking(nuitka::report)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn prepare_env(app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let ready = nuitka::bootstrap::prepare(|stage| {
+            let _ = app.emit("env-progress", stage);
+        })?;
+        Ok::<String, String>(format!(
+            "解释器：{}\n{}",
+            ready.python.display(),
+            ready.nuitka
+        ))
     })
     .await
-    .unwrap_or_else(|_| "{}".to_string())
+    .map_err(|error| error.to_string())?
 }
 
-fn escape(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for character in raw.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            other if (other as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", other as u32)),
-            other => out.push(other),
-        }
-    }
-    out
-}
-
-pub(crate) fn run() {
+pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![scan])
+        .invoke_handler(tauri::generate_handler![scan, prepare_env])
         .run(tauri::generate_context!())
         .expect("启动失败");
 }
