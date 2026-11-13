@@ -1,5 +1,6 @@
 mod env_check;
 pub(crate) mod bootstrap;
+pub(crate) mod dialog;
 pub(crate) mod fetch;
 pub(crate) mod paths;
 pub(crate) mod python_discovery;
