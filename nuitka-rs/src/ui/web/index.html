@@ -3,53 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light">
 <title>Nuitka++</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="wizard-mode">
 
-<div class="scene" aria-hidden="true">
-  <span class="blob blob-a"></span>
-  <span class="blob blob-b"></span>
-  <span class="blob blob-c"></span>
-  <span class="grid"></span>
-</div>
-
 <header class="titlebar" data-tauri-drag-region id="titlebar" title="双击可最大化/还原">
   <img class="tb-icon" src="app-icon.png" alt="" draggable="false" data-tauri-drag-region>
   <span class="tb-title" data-tauri-drag-region>Nuitka++</span>
+  <span class="tb-tag" data-tauri-drag-region>编译工作台</span>
   <span class="tb-spacer" data-tauri-drag-region></span>
+
   <button class="tb-btn" id="tb-min" title="最小化" aria-label="最小化">
-    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 5h6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 5h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
   </button>
   <button class="tb-btn" id="tb-max" title="最大化" aria-label="最大化">
-    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="2.3" y="2.3" width="5.4" height="5.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="2.3" y="2.3" width="5.4" height="5.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
   </button>
   <button class="tb-btn close" id="tb-close" title="关闭" aria-label="关闭">
-    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2.4 2.4l5.2 5.2M7.6 2.4L2.4 7.6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2.4 2.4l5.2 5.2M7.6 2.4L2.4 7.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
   </button>
 </header>
 
 <div id="wizard" class="wizard">
   <div class="wizard-head">
-    <div class="wizard-title">
-      <h1>Nuitka++</h1>
-      <p class="caption">可视化 Nuitka 打包工具</p>
-    </div>
+    <h1>准备编译环境</h1>
+    <p class="caption">Nuitka++ · 可视化 Nuitka 打包工具</p>
   </div>
 
   <div class="wizard-body">
     <div class="status-line">
-      <div class="ring" id="ring"></div>
+      <span class="loader" id="ring" aria-hidden="true"><i></i><i></i><i></i></span>
       <span id="lead">正在检查编译环境…</span>
     </div>
 
-    <div class="result hidden" id="result">
-      <div class="verdict">
-        <span class="dot" id="dot"></span>
-        <span id="levelText">—</span>
-      </div>
+    <section class="result hidden" id="result">
+      <header class="result-head">
+        <span class="verdict"><span class="dot" id="dot"></span><span id="levelText">—</span></span>
+      </header>
       <dl class="facts">
         <dt>Python</dt>
         <dd><span id="pythonText">—</span><small class="path" id="pythonPath"></small></dd>
@@ -59,10 +51,12 @@
         <dd id="compilerText">—</dd>
       </dl>
       <p class="tip" id="hint">—</p>
-    </div>
+    </section>
   </div>
 
   <div class="wizard-foot">
+    <span class="foot-mark">NUITKA++ / 0.1.0</span>
+    <span class="grow"></span>
     <button class="btn secondary" id="prepare">准备环境</button>
     <button class="btn primary" id="primary" disabled>请稍候</button>
   </div>
@@ -75,115 +69,194 @@
     <span class="grow"></span>
     <button class="link" id="exportDiag">导出诊断</button>
     <button class="link" id="envToggle">详情</button>
-    <button class="btn ghost" id="rescan">重新检测</button>
+    <button class="btn secondary small" id="rescan">重新检测</button>
   </div>
   <div class="env-report hidden" id="envReport"></div>
 
-  <div class="page" id="pageConfig">
-    <div class="page-inner">
-      <section class="group">
-        <h2>项目</h2>
-        <div class="field">
-          <span class="label">入口脚本</span>
-          <div class="control">
-            <button class="btn secondary small" id="pickScript">选择 .py</button>
-            <span class="value" id="scriptName">未选择</span>
-            <p class="path" id="scriptPath"></p>
+  <div class="stage">
+    <section class="page" id="pageConfig">
+      <div class="page-frame">
+        <header class="page-head">
+          <div class="page-heading">
+            <h2>项目配置</h2>
+            <p class="page-sub">选择入口脚本、输出目录与编译参数。</p>
           </div>
-        </div>
-        <div class="field">
-          <span class="label">输出目录</span>
-          <div class="control">
-            <button class="btn secondary small" id="pickOut">选择文件夹</button>
-            <p class="path" id="outPath">未选择</p>
+          <div class="page-meta">
+            <span class="meta-key">TARGET</span>
+            <span class="meta-val">WINDOWS X64</span>
           </div>
-        </div>
-        <div class="field">
-          <span class="label">程序名</span>
-          <div class="control">
-            <input class="input" id="appName" placeholder="默认与脚本同名" spellcheck="false">
-          </div>
-        </div>
-      </section>
+        </header>
 
-      <section class="group">
-        <h2>编译选项</h2>
-        <div class="field">
-          <span class="label">输出形式</span>
-          <div class="control">
-            <div class="seg" id="modeSeg">
-              <button data-value="onefile" class="on">单文件</button>
-              <button data-value="standalone">单目录</button>
+        <div class="page-inner">
+          <div class="sheet">
+            <section class="group">
+              <header class="group-head">
+                <h3>项目</h3>
+                <span class="group-rule"></span>
+              </header>
+
+              <div class="field">
+                <span class="label">入口脚本</span>
+                <div class="control">
+                  <div class="control-row">
+                    <button class="btn secondary small" id="pickScript">选择 .py</button>
+                    <span class="value" id="scriptName">未选择</span>
+                  </div>
+                  <p class="path" id="scriptPath"></p>
+                </div>
+              </div>
+
+              <div class="field">
+                <span class="label">输出目录</span>
+                <div class="control">
+                  <div class="control-row">
+                    <button class="btn secondary small" id="pickOut">选择文件夹</button>
+                    <p class="path path-inline" id="outPath">未选择</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field">
+                <span class="label">程序名</span>
+                <div class="control">
+                  <input class="input" id="appName" placeholder="默认与脚本同名" spellcheck="false">
+                </div>
+              </div>
+            </section>
+
+            <section class="group">
+              <header class="group-head">
+                <h3>编译选项</h3>
+                <span class="group-rule"></span>
+              </header>
+
+              <div class="field">
+                <span class="label">输出形式</span>
+                <div class="control">
+                  <div class="seg" id="modeSeg">
+                    <button data-value="onefile" class="on">单文件</button>
+                    <button data-value="standalone">单目录</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field">
+                <span class="label">控制台窗口</span>
+                <div class="control">
+                  <div class="seg" id="consoleSeg">
+                    <button data-value="force" class="on">显示</button>
+                    <button data-value="disable">隐藏</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field">
+                <span class="label">程序图标</span>
+                <div class="control">
+                  <div class="control-row">
+                    <button class="btn secondary small" id="pickIcon">选择 .ico</button>
+                    <span class="value" id="iconPath">未选择</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field">
+                <span class="label">附加参数</span>
+                <div class="control">
+                  <input class="input" id="extraArgs" placeholder="例如 --include-data-dir=assets=assets" spellcheck="false">
+                </div>
+              </div>
+
+              <div class="field field-checks">
+                <span class="label"></span>
+                <div class="control checks">
+                  <label class="check"><input type="checkbox" id="optProgress" checked><span>显示编译进度</span></label>
+                  <label class="check"><input type="checkbox" id="optDownload" checked><span>缺组件时自动下载</span></label>
+                </div>
+              </div>
+            </section>
+
+            <div class="target">
+              <span class="target-key">产物</span>
+              <p class="target-path" id="targetHint"></p>
             </div>
           </div>
         </div>
-        <div class="field">
-          <span class="label">控制台窗口</span>
-          <div class="control">
-            <div class="seg" id="consoleSeg">
-              <button data-value="force" class="on">显示</button>
-              <button data-value="disable">隐藏</button>
+      </div>
+
+      <footer class="footerbar">
+        <span class="status" id="statusText">尚未选择入口脚本</span>
+        <span class="grow"></span>
+        <button class="link" id="copyCmd">复制命令</button>
+        <button class="btn secondary" id="resetForm">重置</button>
+        <button class="btn primary" id="startBuild" disabled>开始打包</button>
+      </footer>
+    </section>
+
+    <section class="page hidden" id="pageBuild">
+      <div class="page-frame">
+        <header class="page-head">
+          <div class="page-heading">
+            <h2 id="buildTitle">正在打包</h2>
+            <p class="page-sub">Nuitka 编译进度与产物状态。</p>
+          </div>
+          <span class="build-badge running" id="buildBadge">RUNNING</span>
+        </header>
+
+        <div class="build-body">
+          <div class="gauge" id="gaugeView">
+            <div class="gauge-top">
+              <div class="gauge-num"><span id="gaugePercent">0</span><small>%</small></div>
+              <div class="gauge-caption">
+                <span class="gauge-hint">Nuitka 编译进度</span>
+              </div>
+            </div>
+
+            <div class="gauge-track">
+              <div class="gauge-bar" id="gaugeBar"></div>
+              <div class="gauge-ticks" aria-hidden="true"></div>
+            </div>
+
+            <div class="gauge-meta">
+              <span class="build-stage" id="buildStage">正在准备…</span>
+              <span class="build-time" id="buildMeta"></span>
+            </div>
+
+            <div class="build-facts">
+              <div class="fact">
+                <span class="fact-key">入口</span>
+                <span class="fact-val" id="buildScript">—</span>
+              </div>
+              <div class="fact">
+                <span class="fact-key">输出</span>
+                <span class="fact-val" id="buildOut">—</span>
+              </div>
+              <div class="fact">
+                <span class="fact-key">形态</span>
+                <span class="fact-val" id="buildMode">—</span>
+              </div>
+              <div class="fact fact-wide">
+                <span class="fact-key">目标</span>
+                <span class="fact-val" id="buildTargetPath">—</span>
+              </div>
+            </div>
+
+            <div class="gauge-actions">
+              <button class="btn primary hidden" id="openOut">打开输出目录</button>
+              <button class="btn secondary hidden" id="buildAgain">再打一次</button>
+              <button class="btn danger" id="cancelBuild">取消打包</button>
             </div>
           </div>
-        </div>
-        <div class="field">
-          <span class="label">程序图标</span>
-          <div class="control">
-            <button class="btn secondary small" id="pickIcon">选择 .ico</button>
-            <span class="value" id="iconPath">未选择</span>
-          </div>
-        </div>
-        <div class="field">
-          <span class="label">附加参数</span>
-          <div class="control">
-            <input class="input" id="extraArgs" placeholder="例如 --include-data-dir=assets=assets" spellcheck="false">
-          </div>
-        </div>
-        <div class="field">
-          <span class="label"></span>
-          <div class="control checks">
-            <label class="check"><input type="checkbox" id="optProgress" checked> 显示编译进度</label>
-            <label class="check"><input type="checkbox" id="optDownload" checked> 缺组件时自动下载</label>
-          </div>
-        </div>
-      </section>
 
-      <p class="target-hint" id="targetHint"></p>
-    </div>
-
-    <div class="footerbar">
-      <span class="status" id="statusText">尚未选择入口脚本</span>
-      <span class="grow"></span>
-      <button class="link" id="copyCmd">复制命令</button>
-      <button class="btn secondary" id="resetForm">重置</button>
-      <button class="btn primary" id="startBuild" disabled>开始打包</button>
-    </div>
-  </div>
-
-  <div class="page hidden" id="pageBuild">
-    <div class="build-inner">
-      <div class="gauge">
-        <svg viewBox="0 0 140 140" aria-hidden="true">
-          <circle class="gauge-track" cx="70" cy="70" r="60"></circle>
-          <circle class="gauge-bar" id="gaugeBar" cx="70" cy="70" r="60"></circle>
-        </svg>
-        <div class="gauge-center">
-          <span id="gaugePercent">0</span><small>%</small>
+          <p class="build-note">编译输出不会显示在界面中，完整日志写入程序目录的 nuitka-rs.log。</p>
         </div>
       </div>
-      <p class="build-stage" id="buildStage">正在准备…</p>
-      <p class="build-meta" id="buildMeta"></p>
-      <div class="build-actions">
-        <button class="btn secondary hidden" id="openOut">打开输出目录</button>
-        <button class="btn secondary hidden" id="buildAgain">再打一次</button>
-        <button class="btn danger" id="cancelBuild">取消打包</button>
-      </div>
-    </div>
+    </section>
   </div>
 </div>
 
 <div class="modal-layer hidden" id="modalLayer">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h3 id="modalTitle">打包失败</h3>
     <p id="modalBody"></p>
     <p class="modal-note">完整日志在程序目录下的 nuitka-rs.log</p>

@@ -48,6 +48,18 @@
     return parts[parts.length - 1] || path;
   }
 
+  function setBuildHead(kind) {
+    const title = $('buildTitle');
+    const badge = $('buildBadge');
+    if (title) {
+      title.textContent = kind === 'done' ? '打包完成' : kind === 'failed' ? '打包失败' : '正在打包';
+    }
+    if (badge) {
+      badge.className = 'build-badge ' + kind;
+      badge.textContent = kind === 'done' ? 'DONE' : kind === 'failed' ? 'FAILED' : 'RUNNING';
+    }
+  }
+
   /* ---------------- 启动向导 ---------------- */
 
   function showResult(status) {
@@ -200,7 +212,7 @@
 
   function renderGauge(value) {
     const clamped = Math.max(0, Math.min(100, value));
-    $('gaugeBar').style.strokeDashoffset = String(377 * (1 - clamped / 100));
+    $('gaugeBar').style.width = clamped + '%';
     $('gaugePercent').textContent = String(Math.round(clamped));
   }
 
@@ -270,9 +282,16 @@
 
   /* ---------------- 弹窗 ---------------- */
 
-  function showModal(title, body) {
+  function showModal(title, body, kind) {
+    const modal = document.querySelector('.modal');
+    modal.classList.toggle('warn', kind === 'warn');
     $('modalTitle').textContent = title;
     $('modalBody').textContent = body;
+
+    const showLog = kind !== 'warn';
+    $('modalLog').classList.toggle('hidden', !showLog);
+    document.querySelector('.modal-note').classList.toggle('hidden', !showLog);
+
     $('modalLayer').classList.remove('hidden');
   }
 
@@ -302,6 +321,14 @@
     return !!(state.script && state.pythonPath && state.ready);
   }
 
+  function targetPath() {
+    if (!state.script || !state.outDir) return '';
+    const stem = (state.script.split(/[\\/]/).pop() || '').replace(/\.py$/i, '');
+    const name = state.name || stem;
+    const leaf = state.mode === 'onefile' ? name + '.exe' : name + '.dist\\';
+    return state.outDir.replace(/[\\/]+$/, '') + '\\' + leaf;
+  }
+
   function update() {
     $('scriptName').textContent = state.script ? baseName(state.script) : '未选择';
     $('scriptPath').textContent = state.script || '';
@@ -324,14 +351,7 @@
     $('copyCmd').disabled = building;
 
     const hint = $('targetHint');
-    if (state.script && state.outDir) {
-      const stem = (state.script.split(/[\\/]/).pop() || '').replace(/\.py$/i, '');
-      const name = state.name || stem;
-      const target = state.mode === 'onefile' ? name + '.exe' : name + '.dist\\';
-      hint.textContent = '将生成：' + state.outDir.replace(/[\\/]+$/, '') + '\\' + target;
-    } else {
-      hint.textContent = '';
-    }
+    hint.textContent = targetPath();
   }
 
   function bindSegmented(id, key) {
@@ -379,19 +399,27 @@
   async function startBuild() {
     if (building) return;
     if (!state.script) {
-      showModal('还差一步', '先选一个要打包的 Python 脚本。');
+      showModal('还差一步', '先选一个要打包的 Python 脚本。', 'warn');
       return;
     }
     if (!state.ready) {
-      showModal('环境还没准备好', '请回到启动向导，点「准备环境」把 Python 和编译器装好。');
+      showModal('环境还没准备好', '请回到启动向导，点「准备环境」把 Python 和编译器装好。', 'warn');
       return;
     }
     if (!state.outDir) {
-      showModal('还没选输出目录', '打包生成的 exe 需要一个地方存放。');
+      showModal('还没选输出目录', '打包生成的 exe 需要一个地方存放。', 'warn');
       return;
     }
 
     building = true;
+    setBuildHead('running');
+    $('buildScript').textContent = baseName(state.script);
+    $('buildScript').title = state.script;
+    $('buildOut').textContent = state.outDir;
+    $('buildOut').title = state.outDir;
+    $('buildMode').textContent = state.mode === 'onefile' ? '单文件' : '单目录';
+    $('buildTargetPath').textContent = targetPath();
+    $('buildTargetPath').title = targetPath();
     showPage('build');
     setGaugeState('running');
     resetGauge();
@@ -408,15 +436,19 @@
       const result = await bridge.invoke('start_build', { request: request() });
       if (result.ok) {
         gaugeRunning = false;
-        raiseGauge(100);
+        gaugeTarget = 100;
+        gaugeShown = 100;
+        renderGauge(100);
         setGaugeState('done');
+        setBuildHead('done');
         setStage('打包完成');
-        setMeta(result.target + '（用时 ' + result.seconds + ' 秒）');
+        setMeta('用时 ' + result.seconds + ' 秒');
         $('openOut').classList.remove('hidden');
         $('buildAgain').classList.remove('hidden');
       } else {
         gaugeRunning = false;
         setGaugeState('failed');
+        setBuildHead('failed');
         setStage('打包失败');
         setMeta('');
         showModal('打包失败', result.detail);
@@ -424,6 +456,7 @@
     } catch (error) {
       gaugeRunning = false;
       setGaugeState('failed');
+      setBuildHead('failed');
       setStage('打包失败');
       setMeta('');
       showModal('打包失败', String(error));
@@ -566,6 +599,13 @@
     }
   });
 
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') return;
+    if ($('modalLayer').classList.contains('hidden')) return;
+    hideModal();
+    if (!building) showPage('config');
+  });
+
   $('rescan').addEventListener('click', function () {
     reportLoaded = false;
     loadEnv();
@@ -592,8 +632,8 @@
     if (!button) return;
     button.title = maximized ? '还原' : '最大化';
     button.innerHTML = maximized
-      ? '<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="2" y="3.4" width="4.6" height="4.6" rx="0.9" fill="none" stroke="currentColor" stroke-width="1.05"/><path d="M3.6 2.1h4.3v4.3" fill="none" stroke="currentColor" stroke-width="1.05"/></svg>'
-      : '<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="2.3" y="2.3" width="5.4" height="5.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>';
+      ? '<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="2" y="3.4" width="4.6" height="4.6" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M3.6 2.1h4.3v4.3" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>'
+      : '<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="2.3" y="2.3" width="5.4" height="5.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
   }
 
   async function toggleMaximize() {

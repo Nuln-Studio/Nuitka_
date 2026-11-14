@@ -174,7 +174,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_theme(Some(tauri::Theme::Dark));
+                let _ = window.set_theme(Some(tauri::Theme::Light));
             }
             Ok(())
         })
