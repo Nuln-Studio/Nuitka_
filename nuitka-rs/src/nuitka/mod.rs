@@ -13,6 +13,7 @@ pub(crate) mod scangcc;
 pub(crate) mod scanmsvc;
 pub(crate) mod scannuitka;
 pub(crate) mod selfcheck;
+pub(crate) mod settings;
 pub(crate) mod toolchain;
 
 use crate::error::PythonCandidate;
@@ -73,8 +74,15 @@ pub(crate) fn status() -> EnvStatus {
 
     let msvcs = scanmsvc::scan();
     let gccs = scangcc::scan();
-    let msvc = python_version.and_then(|version| scanmsvc::best(&msvcs, version));
-    let gcc = scangcc::best(&gccs);
+    let auto_msvc = python_version.and_then(|version| scanmsvc::best(&msvcs, version));
+    let auto_gcc = scangcc::best(&gccs);
+    // 设置页里指定过编译器就照用户的来；找不到就如实显示「缺编译器」，不偷偷换一个
+    let preference = settings::read_settings().compiler;
+    let (msvc, gcc) = match preference.trim() {
+        "gcc" => (None, auto_gcc),
+        "" => (auto_msvc, auto_gcc),
+        _ => (auto_msvc, None),
+    };
     let compiler_text = msvc
         .map(|item| format!("MSVC {}", item.toolset))
         .or_else(|| gcc.map(|item| format!("gcc {}", item.version)))

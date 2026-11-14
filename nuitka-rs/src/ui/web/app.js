@@ -25,13 +25,21 @@
     download: true,
     extra: '',
     pythonChoice: '3.12',
-    pythonCanPrepare: true
+    pythonCanPrepare: true,
+    // 设置页里固定过的 Python 小版本；空表示按规则自动挑
+    pinnedPython: '',
+    // '' = 自动挑编译器
+    compilerChoice: '',
+    autoSave: true,
+    settingsPath: '',
+    formPath: ''
   };
   let pythonChoices = [];
 
   let mode = 'enter';
   let reportLoaded = false;
   let building = false;
+  let settingsFrom = 'config';
   let preflight = false;
   let previewTimer = null;
   let ticker = null;
@@ -579,6 +587,7 @@
       state.ready = false;
     }
     update();
+    paintSettings();
   }
 
   async function loadReport() {
@@ -609,6 +618,7 @@
   function showPage(name) {
     $('pageConfig').classList.toggle('hidden', name !== 'config');
     $('pageBuild').classList.toggle('hidden', name !== 'build');
+    $('pageSettings').classList.toggle('hidden', name !== 'settings');
   }
 
   let gaugeTarget = 0;
@@ -864,6 +874,102 @@
     });
   }
 
+  /* ---------------- 配置记忆 ---------------- */
+
+  function formOf() {
+    return {
+      script: state.script,
+      out_dir: state.outDir,
+      name: state.name,
+      icon: state.icon,
+      mode: state.mode,
+      console: state.console,
+      progress: state.progress,
+      download: state.download,
+      extra: state.extra
+    };
+  }
+
+  function paintSegment(id, value) {
+    Array.prototype.forEach.call($(id).children, function (child) {
+      child.classList.toggle('on', child.dataset.value === value);
+    });
+  }
+
+  // 缺的字段走默认值，别让旧配置把界面搞成半空
+  function applyForm(form) {
+    if (!form) return;
+    state.script = form.script || '';
+    state.outDir = form.out_dir || '';
+    state.name = form.name || '';
+    state.icon = form.icon || '';
+    state.mode = form.mode === 'standalone' ? 'standalone' : 'onefile';
+    state.console = form.console === 'disable' ? 'disable' : 'force';
+    state.progress = form.progress !== false;
+    state.download = form.download !== false;
+    state.extra = form.extra || '';
+
+    $('appName').value = state.name;
+    $('extraArgs').value = state.extra;
+    $('optProgress').checked = state.progress;
+    $('optDownload').checked = state.download;
+    paintSegment('modeSeg', state.mode);
+    paintSegment('consoleSeg', state.console);
+    update();
+  }
+
+  async function loadConfig() {
+    if (!bridge) return;
+    try {
+      const config = await bridge.invoke('read_config');
+      const settings = config.settings || {};
+      state.autoSave = settings.auto_save_last !== false;
+      state.pinnedPython = settings.python_version || '';
+      state.compilerChoice = settings.compiler || '';
+      state.settingsPath = config.settings_path || '';
+      state.formPath = config.form_path || '';
+      if (state.pinnedPython) state.pythonChoice = state.pinnedPython;
+      // 关掉自动保存就不碰表单，用户是想从空白开始
+      if (state.autoSave && config.form) applyForm(config.form);
+      paintSettings();
+    } catch (error) {
+      // 配置读不出来不影响打包，用默认值继续
+    }
+  }
+
+  async function persistSettings() {
+    if (!bridge) return;
+    try {
+      await bridge.invoke('write_settings', {
+        payload: {
+          auto_save_last: state.autoSave,
+          python_version: state.pinnedPython,
+          compiler: state.compilerChoice || ''
+        }
+      });
+    } catch (error) {
+      $('settingsStatus').textContent =
+        '设置没保存上：' + (error && error.message ? error.message : error);
+    }
+  }
+
+  function compilerLabel(kind) {
+    if (!kind) return '没有找到可用编译器';
+    if (kind === 'gcc') return 'winlibs gcc';
+    return 'MSVC ' + kind.replace('msvc:', '');
+  }
+
+  function paintSettings() {
+    $('settingsPython').textContent = (state.python || '—')
+      + (state.pinnedPython ? ' · 已固定' : ' · 自动');
+    $('settingsPythonPath').textContent = state.pythonPath || '';
+    $('settingsCompiler').textContent = compilerLabel(state.compiler);
+    paintSegment('compilerSeg', state.compilerChoice || 'auto');
+    $('optAutoSave').checked = state.autoSave;
+    $('settingsFiles').textContent = state.settingsPath ? '软件设置  ' + state.settingsPath : '';
+    $('settingsFormPath').textContent = state.formPath ? '上次配置  ' + state.formPath : '';
+  }
+
   /* ---------------- 打包 ---------------- */
 
   function startTicker() {
@@ -942,6 +1048,13 @@
       return;
     }
     if (state.mode === 'onefile' && !(await ensureCompression())) return;
+
+    // 打包前先记住这份配置：失败也能从上次的参数直接重试
+    if (state.autoSave && bridge) {
+      bridge.invoke('write_form', { form: formOf() }).catch(function () {
+        // 存不上不影响打包
+      });
+    }
 
     building = true;
     setBuildHead('running');
@@ -1165,6 +1278,111 @@
     button.disabled = false;
   });
 
+  /* ---------------- 设置页 ---------------- */
+
+  $('openSettings').addEventListener('click', function () {
+    // 正在打包时进来，返回要回进度页；否则回配置页
+    settingsFrom = $('pageBuild').classList.contains('hidden') ? 'config' : 'build';
+    $('settingsBack').textContent = settingsFrom === 'build' ? '返回打包进度' : '返回项目配置';
+    paintSettings();
+    showPage('settings');
+  });
+
+  $('settingsBack').addEventListener('click', function () {
+    showPage(settingsFrom);
+  });
+
+  $('changePython').addEventListener('click', async function () {
+    if (building) return;
+    const picked = await choosePython();
+    if (!picked) return;
+    state.pinnedPython = state.pythonChoice;
+    await persistSettings();
+    await loadEnv();
+    paintSettings();
+    $('settingsStatus').textContent = '已固定使用 Python ' + state.pinnedPython + '。';
+  });
+
+  $('compilerSeg').addEventListener('click', async function (event) {
+    const button = event.target.closest('button');
+    if (!button || building) return;
+    state.compilerChoice = button.dataset.value === 'auto' ? '' : button.dataset.value;
+    paintSegment('compilerSeg', button.dataset.value);
+    await persistSettings();
+    await loadEnv();
+    paintSettings();
+  });
+
+  $('optAutoSave').addEventListener('change', function (event) {
+    state.autoSave = event.target.checked;
+    persistSettings();
+  });
+
+  $('exportConfig').addEventListener('click', async function () {
+    if (!bridge) return;
+    const button = $('exportConfig');
+    button.disabled = true;
+    try {
+      const path = await bridge.invoke('export_config', {
+        form: formOf(),
+        python: state.pinnedPython,
+        compiler: state.compilerChoice || ''
+      });
+      if (path) {
+        $('settingsStatus').textContent = '已导出：' + path;
+        state.formPath = path;
+        $('settingsFormPath').textContent = '导出位置  ' + path;
+      }
+    } catch (error) {
+      $('settingsStatus').textContent =
+        '导出失败：' + (error && error.message ? error.message : error);
+    }
+    button.disabled = false;
+  });
+
+  $('importConfig').addEventListener('click', async function () {
+    if (!bridge) return;
+    const button = $('importConfig');
+    button.disabled = true;
+    try {
+      const imported = await bridge.invoke('import_config');
+      if (!imported) {
+        button.disabled = false;
+        return;
+      }
+      applyForm(imported.form);
+      if (imported.python_version) {
+        state.pinnedPython = imported.python_version;
+        state.pythonChoice = imported.python_version;
+      }
+      state.compilerChoice = imported.compiler || '';
+      await persistSettings();
+      await loadEnv();
+      paintSettings();
+
+      const missing = imported.missing || [];
+      if (missing.length) {
+        // 路径对不上就提示重选，别让整份配置白导
+        $('settingsStatus').textContent =
+          '已导入，但这些路径不存在，请重新选择：' + missing.join('、');
+        showModal(
+          '配置部分失效',
+          '这些路径在这台机器上找不到：' + missing.join('、')
+            + '。其余参数已应用，回到项目配置里重选这几项就行。',
+          'warn'
+        );
+      } else {
+        $('settingsStatus').textContent = '已导入配置。';
+      }
+      // 从打包进度页点进来的，导完还回进度页，别把人扔回配置页
+      showPage(settingsFrom);
+    } catch (error) {
+      $('settingsStatus').textContent =
+        '导入失败：' + (error && error.message ? error.message : error);
+    }
+    button.disabled = false;
+  });
+
   /* ---------------- 窗口按钮 ---------------- */
 
   function paintMaximize(maximized) {
@@ -1202,6 +1420,7 @@
       main.classList.remove('hidden');
       showPage('config');
       update();
+      await loadConfig();
       loadEnv();
       return;
     }

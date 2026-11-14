@@ -71,6 +71,45 @@ pub(crate) fn pick_file(owner: isize, title: &str, label: &str, pattern: &str) -
     Some(from_wide(&buffer))
 }
 
+/// 另存为对话框。`default_name` 预填文件名。
+#[cfg(windows)]
+pub(crate) fn pick_save_file(owner: isize, title: &str, default_name: &str) -> Option<String> {
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Controls::Dialogs::{
+        GetSaveFileNameW, OFN_EXPLORER, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
+        OPENFILENAMEW,
+    };
+
+    let title_wide = wide(title);
+    let filter_wide = wide("Nuitka++ 配置 (*.json)\0*.json\0所有文件\0*.*");
+    let ext_wide = wide("json");
+
+    let mut buffer = [0u16; 1024];
+    let seed = wide(default_name);
+    let length = seed.len().min(buffer.len());
+    buffer[..length].copy_from_slice(&seed[..length]);
+
+    let mut open = OPENFILENAMEW {
+        lStructSize: size_of::<OPENFILENAMEW>() as u32,
+        hwndOwner: HWND(owner as *mut core::ffi::c_void),
+        lpstrFilter: PCWSTR(filter_wide.as_ptr()),
+        lpstrFile: PWSTR(buffer.as_mut_ptr()),
+        nMaxFile: buffer.len() as u32,
+        lpstrTitle: PCWSTR(title_wide.as_ptr()),
+        lpstrDefExt: PCWSTR(ext_wide.as_ptr()),
+        Flags: OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER,
+        ..Default::default()
+    };
+
+    unsafe {
+        if !GetSaveFileNameW(&mut open).as_bool() {
+            return None;
+        }
+    }
+    Some(from_wide(&buffer))
+}
+
 #[cfg(windows)]
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
@@ -89,6 +128,11 @@ pub(crate) fn pick_folder(_owner: isize, _title: &str) -> Option<String> {
 
 #[cfg(not(windows))]
 pub(crate) fn pick_file(_owner: isize, _title: &str, _label: &str, _pattern: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(windows))]
+pub(crate) fn pick_save_file(_owner: isize, _title: &str, _default_name: &str) -> Option<String> {
     None
 }
 

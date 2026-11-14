@@ -2,6 +2,7 @@ use semver::Version;
 
 use super::paths;
 use super::python_discovery::{self, Policy, PyVersion, Python, Source};
+use super::settings;
 use crate::error::{NuitkaRsError, PythonCandidate, Result, SourceKind};
 
 const MINIMUM: PyVersion = PyVersion::new(3, 8, 0);
@@ -16,8 +17,14 @@ pub(crate) fn select_python() -> Result<PythonCandidate> {
         return Err(NuitkaRsError::PythonNotFound);
     }
 
-    // 准备环境时用户明确选过 Python 版本；优先用它，而不是简单取最高版本。
-    if let Some(line) = paths::selected_python()
+    // 设置页里固定过版本就用它；没固定过才退回「准备环境时选过的版本」。
+    let configured = settings::read_settings().python_version;
+    let wanted = if configured.trim().is_empty() {
+        paths::selected_python()
+    } else {
+        Some(configured.trim().to_string())
+    };
+    if let Some(line) = wanted
         && let Some((major, minor)) = parse_line(&line)
         && let Some(index) = found
             .iter()

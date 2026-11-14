@@ -5,6 +5,7 @@ use crate::nuitka::bootstrap::{
     EnvPlan, PythonOptions, plan, python_options as build_python_options,
 };
 use crate::nuitka::build;
+use crate::nuitka::settings::{self as config, Form, Imported, Loaded, Settings};
 use crate::nuitka::{EnvStatus, Report};
 
 #[tauri::command]
@@ -34,6 +35,60 @@ fn pick_script(window: tauri::WebviewWindow, title: String) -> Option<String> {
 #[tauri::command]
 fn pick_icon(window: tauri::WebviewWindow, title: String) -> Option<String> {
     nuitka::dialog::pick_file(hwnd_of(&window), &title, "图标文件", "*.ico")
+}
+
+#[tauri::command]
+fn read_config() -> Loaded {
+    config::load()
+}
+
+#[tauri::command]
+fn write_settings(payload: Settings) -> Result<(), String> {
+    // 版本同时写回 paths，让「准备环境」和自动挑解释器认同同一个选择
+    if !payload.python_version.trim().is_empty() {
+        nuitka::paths::set_python(payload.python_version.trim())?;
+    }
+    config::save_settings(&payload)
+}
+
+#[tauri::command]
+fn write_form(form: Form) -> Result<(), String> {
+    config::save_form(&form)
+}
+
+/// 导出配置：带绝对路径、Python 版本和编译器。
+#[tauri::command]
+fn export_config(
+    window: tauri::WebviewWindow,
+    form: Form,
+    python: String,
+    compiler: String,
+) -> Result<Option<String>, String> {
+    let stem = std::path::Path::new(&form.script)
+        .file_stem()
+        .map(|item| item.to_string_lossy().to_string())
+        .filter(|item| !item.trim().is_empty())
+        .unwrap_or_else(|| "nuitka-rs".to_string());
+    let default_name = format!("{stem}-配置.json");
+    let Some(path) = nuitka::dialog::pick_save_file(hwnd_of(&window), "导出配置", &default_name)
+    else {
+        return Ok(None);
+    };
+    config::export_to(std::path::Path::new(&path), &form, &python, &compiler)?;
+    nuitka::log::write(&format!("已导出配置：{path}"));
+    Ok(Some(path))
+}
+
+/// 导入配置：路径落不到盘的项不拦截，交给前端提示用户重选。
+#[tauri::command]
+fn import_config(window: tauri::WebviewWindow) -> Result<Option<Imported>, String> {
+    let Some(path) = nuitka::dialog::pick_file(hwnd_of(&window), "导入配置", "Nuitka++ 配置", "*.json")
+    else {
+        return Ok(None);
+    };
+    let imported = config::import_from(std::path::Path::new(&path))?;
+    nuitka::log::write(&format!("已导入配置：{path}"));
+    Ok(Some(imported))
 }
 
 /// 把窗口句柄交给对话框当宿主，否则对话框会被主窗口盖住。
@@ -229,6 +284,11 @@ pub fn run() {
             pick_dir,
             pick_script,
             pick_icon,
+            read_config,
+            write_settings,
+            write_form,
+            export_config,
+            import_config,
             export_diagnostics,
             preview_command,
             compression_ready,

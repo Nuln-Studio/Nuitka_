@@ -774,7 +774,7 @@ fn ensure_zstandard<F: FnMut(PrepareEvent)>(python: &Path, progress: &mut F) {
 /// 单独也能调：打包前发现缺件时补装，不用整个重跑准备流程。
 pub(crate) fn install_zstandard<F: FnMut(String)>(
     python: &Path,
-    mut progress: F,
+    progress: F,
 ) -> Result<(), String> {
     fetch::run_streaming(
         python,
@@ -788,7 +788,7 @@ pub(crate) fn install_zstandard<F: FnMut(String)>(
             MIRROR,
         ],
         &[],
-        |line| progress(line),
+        progress,
     )
     .map(|_| ())
 }

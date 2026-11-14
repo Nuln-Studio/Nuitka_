@@ -110,6 +110,7 @@
     <span class="env-text" id="envText">正在检测环境…</span>
     <span class="grow"></span>
     <button class="link" id="exportDiag">导出诊断</button>
+    <button class="link" id="openSettings">设置</button>
     <button class="link" id="envToggle">详情</button>
     <button class="btn secondary small" id="rescan">重新检测</button>
   </div>
@@ -293,6 +294,85 @@
           <p class="build-note">编译输出不会显示在界面中，完整日志写入程序目录的 nuitka-rs.log。</p>
         </div>
       </div>
+    </section>
+
+    <section class="page hidden" id="pageSettings">
+      <div class="page-frame">
+        <header class="page-head">
+          <div class="page-heading">
+            <h2>设置</h2>
+            <p class="page-sub">换解释器、换编译器，管理配置文件。</p>
+          </div>
+          <div class="page-meta">
+            <span class="meta-key">SETTINGS</span>
+            <span class="meta-val">程序同级目录</span>
+          </div>
+        </header>
+
+        <div class="page-inner">
+          <div class="sheet">
+            <section class="group">
+              <header class="group-head">
+                <h3>编译环境</h3>
+                <span class="group-rule"></span>
+              </header>
+
+              <div class="field">
+                <span class="label">目标 Python</span>
+                <div class="control">
+                  <div class="control-row">
+                    <button class="btn secondary small" id="changePython">更换版本</button>
+                    <span class="value" id="settingsPython">—</span>
+                  </div>
+                  <p class="path" id="settingsPythonPath"></p>
+                </div>
+              </div>
+
+              <div class="field">
+                <span class="label">编译器</span>
+                <div class="control">
+                  <div class="seg" id="compilerSeg">
+                    <button data-value="auto" class="on">自动</button>
+                    <button data-value="msvc">MSVC</button>
+                    <button data-value="gcc">winlibs gcc</button>
+                  </div>
+                  <p class="path" id="settingsCompiler"></p>
+                </div>
+              </div>
+            </section>
+
+            <section class="group">
+              <header class="group-head">
+                <h3>配置记忆</h3>
+                <span class="group-rule"></span>
+              </header>
+
+              <div class="field field-checks">
+                <span class="label"></span>
+                <div class="control checks">
+                  <label class="check"><input type="checkbox" id="optAutoSave" checked><span>自动记住上一次项目配置</span></label>
+                </div>
+              </div>
+
+              <div class="field">
+                <span class="label">配置文件</span>
+                <div class="control">
+                  <p class="path" id="settingsFiles"></p>
+                  <p class="path" id="settingsFormPath"></p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <footer class="footerbar">
+        <span class="status" id="settingsStatus">导出的配置带绝对路径，可以在别的机器上导入。</span>
+        <span class="grow"></span>
+        <button class="btn secondary" id="importConfig">导入配置</button>
+        <button class="btn secondary" id="exportConfig">导出配置</button>
+        <button class="btn primary" id="settingsBack">返回项目配置</button>
+      </footer>
     </section>
   </div>
 </div>
