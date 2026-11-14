@@ -416,15 +416,28 @@ pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
         "检测编译器",
         "优先复用已安装的 MSVC，缺失时才用 Nuitka winlibs",
     ));
-    let tool = toolchain::resolve(PYTHON_VERSION);
-    let raw = if let Some(tool) = &tool {
+    let mut tool = toolchain::resolve(PYTHON_VERSION);
+    let raw = if let Some(tool) = tool.as_ref() {
         progress(PrepareEvent::stage(
             "使用已有编译器，跳过下载",
             format!("{}（{}）", tool.label, tool.kind_label()),
         ));
         fetch::run(&python, &["-m", "nuitka", "--version"])?
     } else {
-        ensure_compiler(&python, &mut progress)?
+        let raw = ensure_compiler(&python, &mut progress)?;
+        // winlibs 刚解压好，重新扫描一次，让自检/打包拿到 --mingw64 和 PATH
+        tool = toolchain::resolve(PYTHON_VERSION);
+        if let Some(tool) = tool.as_ref() {
+            progress(PrepareEvent::log(format!(
+                "winlibs 编译器已就绪：{}",
+                tool.label
+            )));
+        } else {
+            progress(PrepareEvent::log(
+                "winlibs 已解压，但扫描器没有在缓存里找到 gcc.exe",
+            ));
+        }
+        raw
     };
     let summary = first_line(&raw).to_string();
 

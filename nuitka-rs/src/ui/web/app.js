@@ -605,8 +605,7 @@
 
       const eta = document.createElement('p');
       eta.className = 'confirm-eta';
-      eta.textContent = '按约 1 MB/s 估算，预计 ' + formatEta(plan.eta_seconds)
-        + '；实际速度会显示在准备页。';
+      eta.textContent = '亲测用时13分钟。';
       body.appendChild(eta);
 
       $('confirmOk').onclick = function () { finishConfirm(true); };

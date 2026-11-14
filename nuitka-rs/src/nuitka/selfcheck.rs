@@ -54,6 +54,8 @@ pub(crate) fn run<F: FnMut(&str)>(
         .arg("-m")
         .arg("nuitka")
         .arg("--onefile")
+        // winlibs 已经由应用下好；这里只允许 Nuitka 自动补 Dependency Walker
+        .arg("--assume-yes-for-downloads")
         .arg("--windows-console-mode=force")
         .arg(format!("--output-dir={}", workspace.display()))
         .arg("--output-filename=selfcheck");

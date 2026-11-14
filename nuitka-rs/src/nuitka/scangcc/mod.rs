@@ -143,6 +143,7 @@ fn parse_banner(banner: &str) -> Option<PyVersion> {
 fn candidates() -> Vec<(PathBuf, Source)> {
     let mut out = Vec::new();
     if let Some(local) = env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        // 旧版 Nuitka 的缓存位置
         out.push((
             local
                 .join("Nuitka")
@@ -152,6 +153,26 @@ fn candidates() -> Vec<(PathBuf, Source)> {
                 .join("gcc.exe"),
             Source::NuitkaCache,
         ));
+        // 新版 Nuitka 把 winlibs 解压在 Cache\downloads\gcc\x86_64\<版本> 下
+        let cache = local
+            .join("Nuitka")
+            .join("Nuitka")
+            .join("Cache")
+            .join("downloads")
+            .join("gcc")
+            .join("x86_64");
+        if let Ok(entries) = fs::read_dir(cache) {
+            for entry in entries.flatten() {
+                out.push((
+                    entry
+                        .path()
+                        .join("mingw64")
+                        .join("bin")
+                        .join("gcc.exe"),
+                    Source::NuitkaCache,
+                ));
+            }
+        }
     }
     if let Some(path) = env::var_os("PATH") {
         for directory in env::split_paths(&path) {
