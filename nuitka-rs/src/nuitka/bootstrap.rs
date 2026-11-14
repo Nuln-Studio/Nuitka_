@@ -762,7 +762,21 @@ fn ensure_zstandard<F: FnMut(PrepareEvent)>(python: &Path, progress: &mut F) {
         "补齐 onefile 压缩组件",
         "zstandard · 清华 PyPI",
     ));
-    match fetch::run_streaming(
+    match install_zstandard(python, |line| progress(PrepareEvent::log(line))) {
+        Ok(()) => log::info("zstandard 已安装"),
+        Err(error) => {
+            log::error(&format!("zstandard 安装失败，onefile 将不压缩：{error}"));
+            progress(PrepareEvent::log(format!("zstandard 安装失败：{error}")));
+        }
+    }
+}
+
+/// 单独也能调：打包前发现缺件时补装，不用整个重跑准备流程。
+pub(crate) fn install_zstandard<F: FnMut(String)>(
+    python: &Path,
+    mut progress: F,
+) -> Result<(), String> {
+    fetch::run_streaming(
         python,
         &[
             "-m",
@@ -774,14 +788,9 @@ fn ensure_zstandard<F: FnMut(PrepareEvent)>(python: &Path, progress: &mut F) {
             MIRROR,
         ],
         &[],
-        |line| progress(PrepareEvent::log(line)),
-    ) {
-        Ok(_) => log::info("zstandard 已安装"),
-        Err(error) => {
-            log::error(&format!("zstandard 安装失败，onefile 将不压缩：{error}"));
-            progress(PrepareEvent::log(format!("zstandard 安装失败：{error}")));
-        }
-    }
+        |line| progress(line),
+    )
+    .map(|_| ())
 }
 
 fn mirror_asset(python_line: &str) -> Result<(String, String), String> {

@@ -123,6 +123,28 @@ fn preview_command(request: build::Request) -> String {
     build::command_line(&request)
 }
 
+/// 单文件打包前先问一句：这个 Python 里有没有 zstandard。
+#[tauri::command]
+async fn compression_ready(python: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        build::compression_ready(std::path::Path::new(&python))
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+/// 缺件时就地补装，不用把整个「准备环境」重跑一遍。
+#[tauri::command]
+async fn install_compression(python: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        nuitka::bootstrap::install_zstandard(std::path::Path::new(&python), |line| {
+            nuitka::log::write(&line);
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 async fn start_build(app: AppHandle, request: build::Request) -> Result<build::Outcome, String> {
     let handle = app.clone();
@@ -209,6 +231,8 @@ pub fn run() {
             pick_icon,
             export_diagnostics,
             preview_command,
+            compression_ready,
+            install_compression,
             start_build,
             cancel_build,
             open_log,

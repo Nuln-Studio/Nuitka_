@@ -32,6 +32,7 @@
   let mode = 'enter';
   let reportLoaded = false;
   let building = false;
+  let preflight = false;
   let previewTimer = null;
   let ticker = null;
   let startedAt = 0;
@@ -765,6 +766,29 @@
         + '（按当前缺少的组件和本机 CPU 估算）。';
       body.appendChild(eta);
 
+      $('confirmOk').textContent = '开始下载';
+      $('confirmCancel').textContent = '取消';
+      $('confirmOk').onclick = function () { finishConfirm(true); };
+      $('confirmCancel').onclick = function () { finishConfirm(false); };
+      $('confirmLayer').classList.remove('hidden');
+      $('confirmOk').focus();
+    });
+  }
+
+  /* 复用一个确认框，只换标题/正文/按钮文案 */
+  function confirmPrompt(title, bodyText, okLabel, cancelLabel) {
+    return new Promise(function (resolve) {
+      confirmResolve = resolve;
+      $('confirmTitle').textContent = title;
+      const body = $('confirmBody');
+      body.textContent = '';
+      const lead = document.createElement('p');
+      lead.className = 'confirm-lead';
+      lead.textContent = bodyText;
+      body.appendChild(lead);
+
+      $('confirmOk').textContent = okLabel;
+      $('confirmCancel').textContent = cancelLabel;
       $('confirmOk').onclick = function () { finishConfirm(true); };
       $('confirmCancel').onclick = function () { finishConfirm(false); };
       $('confirmLayer').classList.remove('hidden');
@@ -869,8 +893,42 @@
     $('copyCmd').disabled = false;
   }
 
+  /* 单文件的体积全靠 Python 里的 zstandard；缺了就先问一句再补装 */
+  async function ensureCompression() {
+    preflight = true;
+    try {
+      let ready = true;
+      try {
+        ready = await bridge.invoke('compression_ready', { python: state.pythonPath });
+      } catch (error) {
+        // 探不出来就别拦着打包，让 Nuitka 自己决定
+        ready = true;
+      }
+      if (ready) return true;
+
+      const install = await confirmPrompt(
+        '单文件压缩组件缺失',
+        '当前 Python 环境里没有 zstandard，Nuitka 会把整个 payload 不压缩直接塞进 exe，'
+          + '体积会大一倍以上。装一下大约 0.5 MB，之后所有单文件打包都能压。',
+        '装好再打包',
+        '不压缩直接打包'
+      );
+      if (!install) return true;
+
+      try {
+        await bridge.invoke('install_compression', { python: state.pythonPath });
+      } catch (error) {
+        showModal('压缩组件没装上', String(error) + '。再点一次打包可以选「不压缩直接打包」。', 'warn');
+        return false;
+      }
+      return true;
+    } finally {
+      preflight = false;
+    }
+  }
+
   async function startBuild() {
-    if (building) return;
+    if (building || preflight) return;
     if (!state.script) {
       showModal('还差一步', '先选一个要打包的 Python 脚本。', 'warn');
       return;
@@ -883,6 +941,7 @@
       showModal('还没选输出目录', '打包生成的 exe 需要一个地方存放。', 'warn');
       return;
     }
+    if (state.mode === 'onefile' && !(await ensureCompression())) return;
 
     building = true;
     setBuildHead('running');
@@ -918,6 +977,10 @@
         setMeta('用时 ' + result.seconds + ' 秒');
         $('openOut').classList.remove('hidden');
         $('buildAgain').classList.remove('hidden');
+        const notices = result.notices || [];
+        if (notices.length) {
+          showModal('打包完成，但没有压缩', notices.join('\n'), 'warn');
+        }
       } else {
         gaugeRunning = false;
         setGaugeState('failed');

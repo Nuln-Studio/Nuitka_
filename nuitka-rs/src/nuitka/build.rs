@@ -43,6 +43,24 @@ pub(crate) struct Outcome {
     pub target: String,
     pub seconds: u64,
     pub detail: String,
+    /// Nuitka 自己降级 / 关掉某项能力时，翻成用户看得懂的一句话，界面据此弹窗。
+    pub notices: Vec<String>,
+}
+
+/// 只在日志里躺着的已知警告，命中就翻译成面向用户的一句话。
+/// 判据必须来自 Nuitka 的真实输出：它会在系统里另找一个带 zstandard 的 Python，
+/// 我们自己预检反而会误报。
+const NOTICES: &[(&str, &str)] = &[(
+    "Onefile mode cannot compress without 'zstandard'",
+    "单文件模式这次没有压缩：当前 Python 环境缺 zstandard，Nuitka 把整个 payload 原样塞进了 exe。\
+功能不受影响，但体积会明显偏大，首次启动也会稍慢一点。",
+)];
+
+fn notice_for(line: &str) -> Option<&'static str> {
+    NOTICES
+        .iter()
+        .find(|(needle, _)| line.contains(needle))
+        .map(|(_, text)| *text)
 }
 
 /// 实际传给 Nuitka 的参数（不含 python 自身）。
@@ -56,6 +74,12 @@ fn arguments(request: &Request) -> Vec<String> {
         }
         .to_string(),
     );
+    // 压缩阶段按 CPU 核数开线程，内存小的机器会直接把内存吃爆
+    if request.onefile
+        && let Some(jobs) = compression_jobs()
+    {
+        args.push(format!("--jobs={jobs}"));
+    }
     args.push(format!(
         "--windows-console-mode={}",
         if request.console { "force" } else { "disable" }
@@ -104,6 +128,51 @@ fn clean(value: &str) -> Option<&str> {
     } else {
         Some(trimmed)
     }
+}
+
+/// zstd level 22 每个压缩线程要几百 MB。Nuitka 默认按 CPU 核数开线程，
+/// 内存不够的机器会在压缩阶段直接 `Allocation error : not enough memory`。
+const COMPRESSION_WORKER_MB: u64 = 600;
+
+#[cfg(windows)]
+fn available_memory_mb() -> Option<u64> {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+
+    let mut status = MEMORYSTATUSEX {
+        dwLength: size_of::<MEMORYSTATUSEX>() as u32,
+        ..Default::default()
+    };
+    unsafe { GlobalMemoryStatusEx(&mut status).ok()? };
+    Some(status.ullAvailPhys / (1024 * 1024))
+}
+
+#[cfg(not(windows))]
+fn available_memory_mb() -> Option<u64> {
+    None
+}
+
+/// 需要显式压线程数时返回 `--jobs` 的值；内存够用返回 None，保持 Nuitka 默认。
+fn compression_jobs() -> Option<usize> {
+    let cores = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1);
+    jobs_for(available_memory_mb()?, cores)
+}
+
+fn jobs_for(free_mb: u64, cores: usize) -> Option<usize> {
+    let affordable = (free_mb / COMPRESSION_WORKER_MB).max(1) as usize;
+    (affordable < cores).then_some(affordable)
+}
+
+/// 单文件压缩要用到 Python 里的 zstandard；没有它 Nuitka 会静默降级成不压缩。
+pub(crate) fn compression_ready(python: &Path) -> bool {
+    crate::util::command(python)
+        .args(["-c", "import zstandard"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn quote(value: &str) -> String {
@@ -290,7 +359,8 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
 
     let started = Instant::now();
     let mut args = arguments(request);
-    let (mut ok, mut failure) = execute(&python, &args, tool.as_ref(), &mut on_line)?;
+    let mut notices: Vec<String> = Vec::new();
+    let (mut ok, mut failure) = execute(&python, &args, tool.as_ref(), &mut notices, &mut on_line)?;
 
     // MSVC 认不出来时（新版本 VS 很常见），退到 Nuitka 自带的 winlibs 再试一次
     if !ok
@@ -303,9 +373,14 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
         retry.compiler = "gcc".to_string();
         args = arguments(&retry);
         on_line(&format!("[命令] {}", command_line(&retry)));
-        let (next_ok, next_failure) = execute(&python, &args, Some(&gcc), &mut on_line)?;
+        let (next_ok, next_failure) =
+            execute(&python, &args, Some(&gcc), &mut notices, &mut on_line)?;
         ok = next_ok;
         failure = next_failure;
+    }
+
+    for notice in &notices {
+        log::info(&format!("提示：{notice}"));
     }
 
     let seconds = started.elapsed().as_secs();
@@ -321,6 +396,7 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
             target,
             seconds,
             detail: format!("完成，用时 {seconds} 秒"),
+            notices,
         })
     } else {
         let detail = if ok {
@@ -334,6 +410,7 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
             target,
             seconds,
             detail,
+            notices,
         })
     }
 }
@@ -343,6 +420,7 @@ fn execute(
     python: &Path,
     args: &[String],
     tool: Option<&toolchain::Toolchain>,
+    notices: &mut Vec<String>,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<(bool, String), String> {
     let mut command = crate::util::command(python);
@@ -376,6 +454,11 @@ fn execute(
 
     let mut last_problem: Option<String> = None;
     for line in receiver {
+        if let Some(notice) = notice_for(&line)
+            && !notices.iter().any(|item| item == notice)
+        {
+            notices.push(notice.to_string());
+        }
         if line.contains("FATAL") || line.contains("ERROR") {
             last_problem = Some(line.clone());
         }
@@ -694,6 +777,50 @@ mod tests {
         let mut tracker = Tracker::default();
         assert!(tracker.feed("Nuitka: Running C compilation via Scons.").is_some());
         assert!(tracker.feed("Nuitka-Scons: Running C compilation via Scons.").is_none());
+    }
+
+    #[test]
+    fn notice_is_recognized_from_the_real_log_line() {
+        // 原样取自 nuitka-rs.log，Nuitka 的换行是硬折行，这里拼成一行
+        let line = "Nuitka-Onefile:WARNING: Onefile mode cannot compress without 'zstandard' \
+package installed You probably should depend on 'Nuitka[onefile]' rather than 'Nuitka' \
+which among other things depends on it.";
+        let notice = notice_for(line).expect("必须认出这条警告");
+        assert!(notice.contains("没有压缩"));
+    }
+
+    #[test]
+    fn unrelated_warnings_stay_out_of_notices() {
+        assert!(notice_for("scons: warning: MSVC version '14.50' was not found.").is_none());
+        assert!(notice_for("Nuitka:ERROR: something broke").is_none());
+    }
+
+    #[test]
+    fn outcome_exposes_notices_to_the_ui() {
+        let outcome = Outcome {
+            ok: true,
+            target: "demo.exe".to_string(),
+            seconds: 1,
+            detail: String::new(),
+            notices: vec![
+                notice_for("Onefile mode cannot compress without 'zstandard'")
+                    .unwrap()
+                    .to_string(),
+            ],
+        };
+        let text = serde_json::to_string(&outcome).expect("序列化");
+        assert!(text.contains("\"notices\""));
+        assert!(text.contains("没有压缩"));
+    }
+
+    #[test]
+    fn memory_shortfall_caps_compression_jobs() {
+        // 2.5 GB 可用、16 核：只敢开 4 个压缩线程
+        assert_eq!(jobs_for(2500, 16), Some(4));
+        // 内存充足就别干预 Nuitka 的默认
+        assert_eq!(jobs_for(16000, 16), None);
+        // 再紧也得留一个线程，不能算成 0
+        assert_eq!(jobs_for(100, 16), Some(1));
     }
 
     /// 真打一次包，只有本机装好环境才跑得起来：
