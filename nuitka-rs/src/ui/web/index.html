@@ -38,6 +38,48 @@
       <span id="lead">正在检查编译环境…</span>
     </div>
 
+    <section class="prepare hidden" id="preparePanel">
+      <div class="prepare-head">
+        <div class="prepare-heading">
+          <p class="prepare-stage" id="prepareStage" aria-live="polite">正在准备环境</p>
+          <p class="prepare-sub" id="prepareSub">解析下载地址…</p>
+        </div>
+        <span class="prepare-time" id="prepareTime">00:00</span>
+      </div>
+
+      <div class="progress" id="prepareProgress">
+        <div class="progress-fill" id="prepareFill"></div>
+      </div>
+
+      <div class="prepare-metrics">
+        <div class="metric">
+          <span class="metric-key">速度</span>
+          <span class="metric-val" id="prepareSpeed">—</span>
+        </div>
+        <div class="metric">
+          <span class="metric-key">流量</span>
+          <span class="metric-val" id="prepareBytes">等待下载</span>
+        </div>
+        <div class="metric">
+          <span class="metric-key">网络</span>
+          <span class="metric-val" id="prepareQuality">检测中</span>
+          <span class="signal" id="prepareSignal" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        </div>
+        <div class="metric">
+          <span class="metric-key">剩余</span>
+          <span class="metric-val" id="prepareEta">—</span>
+        </div>
+      </div>
+
+      <div class="prepare-info-row">
+        <p class="prepare-info" id="prepareInfo">正在解析下载地址…</p>
+        <button class="link prepare-toggle" id="togglePrepareDetails" type="button" aria-expanded="false">显示详情</button>
+      </div>
+      <div class="prepare-details hidden" id="prepareDetails">
+        <pre class="prepare-log" id="prepareLog"></pre>
+      </div>
+    </section>
+
     <section class="result hidden" id="result">
       <header class="result-head">
         <span class="verdict"><span class="dot" id="dot"></span><span id="levelText">—</span></span>
@@ -263,6 +305,18 @@
     <div class="modal-actions">
       <button class="btn secondary" id="modalLog">打开日志</button>
       <button class="btn primary" id="modalClose">知道了</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-layer hidden" id="confirmLayer">
+  <div class="modal confirm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <h3 id="confirmTitle">需要下载编译环境</h3>
+    <div class="confirm-body" id="confirmBody"></div>
+    <p class="modal-note">下载过程会显示实时速度、剩余时间和安装日志。</p>
+    <div class="modal-actions">
+      <button class="btn secondary" id="confirmCancel">取消</button>
+      <button class="btn primary" id="confirmOk">开始下载</button>
     </div>
   </div>
 </div>

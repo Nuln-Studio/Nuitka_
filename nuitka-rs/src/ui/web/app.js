@@ -33,6 +33,15 @@
   let ticker = null;
   let startedAt = 0;
 
+  const prep = {
+    active: false,
+    startedAt: 0,
+    timer: null,
+    expanded: false,
+    logs: []
+  };
+  let confirmResolve = null;
+
   /* ---------------- 通用 ---------------- */
 
   function setBusy(text) {
@@ -46,6 +55,242 @@
   function baseName(path) {
     const parts = path.split(/[\\/]/);
     return parts[parts.length - 1] || path;
+  }
+
+  /* ---------------- 环境准备进度 ---------------- */
+
+  function pad2(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  function formatClock(date) {
+    return pad2(date.getHours()) + ':' + pad2(date.getMinutes()) + ':' + pad2(date.getSeconds());
+  }
+
+  function formatElapsed(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    return hours > 0
+      ? hours + ':' + pad2(minutes) + ':' + pad2(seconds)
+      : pad2(minutes) + ':' + pad2(seconds);
+  }
+
+  function formatBytes(bytes) {
+    if (!bytes || bytes < 1) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let index = 0;
+    while (value >= 1024 && index < units.length - 1) {
+      value /= 1024;
+      index += 1;
+    }
+    const digits = index === 0 || value >= 100 ? 0 : 1;
+    return value.toFixed(digits) + ' ' + units[index];
+  }
+
+  function formatSpeed(bytesPerSecond) {
+    if (!isFinite(bytesPerSecond) || bytesPerSecond < 1) return '—';
+    return formatBytes(bytesPerSecond) + '/s';
+  }
+
+  function formatEta(seconds) {
+    if (!isFinite(seconds) || seconds <= 0) return '—';
+    if (seconds < 60) return Math.ceil(seconds) + ' 秒';
+    if (seconds < 3600) return Math.ceil(seconds / 60) + ' 分';
+    return (seconds / 3600).toFixed(1) + ' 小时';
+  }
+
+  function sourceLabel(source) {
+    if (!source) return '';
+    if (source.includes('nju.edu.cn')) return '南大镜像';
+    if (source.includes('sourceforge')) return 'SourceForge 镜像';
+    if (source.includes('github')) return 'GitHub';
+    if (source.includes('tuna.tsinghua')) return '清华 PyPI';
+    if (source.includes('pypi')) return 'PyPI';
+    return source;
+  }
+
+  function qualityFor(speed) {
+    if (speed >= 2 * 1024 * 1024) return { label: '流畅', level: 4 };
+    if (speed >= 512 * 1024) return { label: '一般', level: 3 };
+    if (speed >= 32 * 1024) return { label: '较慢', level: 2 };
+    if (speed > 0) return { label: '很慢', level: 1 };
+    return { label: '等待', level: 0 };
+  }
+
+  function setSignal(level) {
+    const signal = $('prepareSignal');
+    signal.className = 'signal' + (level > 0 ? ' q' + level : '');
+  }
+
+  function setPrepareIndeterminate() {
+    $('prepareProgress').classList.add('indeterminate');
+    $('prepareFill').style.removeProperty('width');
+  }
+
+  function renderPrepareLog() {
+    const box = $('prepareLog');
+    box.textContent = prep.logs.join('\n');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function setPrepareDetails(open) {
+    prep.expanded = open;
+    $('prepareDetails').classList.toggle('hidden', !open);
+    const button = $('togglePrepareDetails');
+    button.textContent = open ? '收起详情' : '显示详情';
+    button.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) renderPrepareLog();
+  }
+
+  function addPrepareLog(text) {
+    if (!text) return;
+    prep.logs.push('[' + formatClock(new Date()) + '] ' + text);
+    if (prep.logs.length > 600) prep.logs.shift();
+    if (prep.expanded) renderPrepareLog();
+  }
+
+  function updatePrepareClock() {
+    if (!prep.active) return;
+    $('prepareTime').textContent = formatElapsed(Date.now() - prep.startedAt);
+  }
+
+  function startPreparePanel() {
+    prep.active = true;
+    prep.startedAt = Date.now();
+    prep.logs = [];
+    if (prep.timer) clearInterval(prep.timer);
+    prep.timer = setInterval(updatePrepareClock, 1000);
+
+    $('preparePanel').classList.remove('hidden');
+    $('result').classList.add('hidden');
+    $('prepareStage').textContent = '正在准备环境';
+    $('prepareSub').textContent = '正在建立准备流程…';
+    $('prepareTime').textContent = '00:00';
+    $('prepareSpeed').textContent = '—';
+    $('prepareBytes').textContent = '等待下载';
+    $('prepareQuality').textContent = '检测中';
+    $('prepareEta').textContent = '—';
+    $('prepareInfo').textContent = '正在解析下载地址…';
+    $('prepareLog').textContent = '';
+    setPrepareDetails(false);
+    addPrepareLog('开始准备环境');
+    setPrepareIndeterminate();
+    setSignal(0);
+  }
+
+  function stopPrepareTimer() {
+    if (prep.timer) {
+      clearInterval(prep.timer);
+      prep.timer = null;
+    }
+  }
+
+  function finishPreparePanel() {
+    prep.active = false;
+    stopPrepareTimer();
+    $('preparePanel').classList.add('hidden');
+  }
+
+  function failPreparePanel(message) {
+    prep.active = false;
+    stopPrepareTimer();
+    $('prepareStage').textContent = '准备失败';
+    $('prepareSub').textContent = '可以重试，或检查网络与安装目录权限';
+    $('prepareInfo').textContent = message || '详细信息见程序目录下的 nuitka-rs.log';
+    $('prepareProgress').classList.remove('indeterminate');
+    $('prepareFill').style.width = '0%';
+    $('prepareSpeed').textContent = '—';
+    $('prepareBytes').textContent = '已停止';
+    $('prepareQuality').textContent = '已停止';
+    $('prepareEta').textContent = '—';
+    addPrepareLog('准备失败：' + (message || '详细信息见程序目录下的 nuitka-rs.log'));
+    setPrepareDetails(true);
+    setSignal(0);
+  }
+
+  function updatePrepare(payload) {
+    if (!prep.active) return;
+
+    let event;
+    if (typeof payload === 'string') {
+      event = { kind: 'stage', stage: payload };
+    } else if (payload && typeof payload === 'object') {
+      event = payload;
+    } else {
+      return;
+    }
+
+    const stage = String(event.stage || '');
+    const detail = String(event.detail || '');
+    const source = sourceLabel(String(event.source || ''));
+    const bytes = Math.max(0, Number(event.bytes) || 0);
+    const total = Math.max(0, Number(event.total) || 0);
+    const speed = Math.max(0, Number(event.speed) || 0);
+
+    if (event.kind === 'log') {
+      addPrepareLog(detail || stage);
+      return;
+    }
+
+    if (stage) {
+      $('prepareStage').textContent = stage;
+      $('prepareStage').title = stage;
+      // 下载进度每 200ms 一条，不往日志里重复刷同一行
+      if (event.kind !== 'download') {
+        addPrepareLog(detail ? stage + ' · ' + detail : stage);
+      }
+    }
+
+    const isDownload = event.kind === 'download';
+    const sub = isDownload
+      ? (source ? '来源：' + source : (detail || '正在下载…'))
+      : (detail || '正在处理…');
+    $('prepareSub').textContent = sub;
+    $('prepareSub').title = detail || source || '';
+
+    const infoText = isDownload ? detail : '';
+    $('prepareInfo').textContent = infoText;
+    $('prepareInfo').title = detail || '';
+    $('prepareInfo').classList.toggle('hidden', !infoText);
+
+    if (isDownload) {
+      const known = total > 0 && bytes > 0;
+      const percent = known ? Math.max(0, Math.min(100, bytes / total * 100)) : 0;
+      if (known) {
+        $('prepareProgress').classList.remove('indeterminate');
+        $('prepareFill').style.width = percent.toFixed(1) + '%';
+      } else {
+        setPrepareIndeterminate();
+      }
+      $('prepareSpeed').textContent = speed > 0 ? formatSpeed(speed) : '等待数据';
+      $('prepareBytes').textContent = known
+        ? formatBytes(bytes) + ' / ' + formatBytes(total)
+        : formatBytes(bytes);
+      const quality = qualityFor(speed);
+      $('prepareQuality').textContent = quality.label;
+      setSignal(quality.level);
+      $('prepareEta').textContent = known && speed > 1024
+        ? formatEta((total - bytes) / speed)
+        : '—';
+      return;
+    }
+
+    setPrepareIndeterminate();
+    $('prepareSpeed').textContent = '—';
+    $('prepareBytes').textContent = '本阶段不统计';
+    $('prepareQuality').textContent = '—';
+    $('prepareEta').textContent = '—';
+    setSignal(0);
+  }
+
+  function bindPrepareEvents() {
+    if (!events) return;
+    events.listen('env-progress', function (event) {
+      updatePrepare(event.payload);
+    });
   }
 
   function setBuildHead(kind) {
@@ -63,6 +308,7 @@
   /* ---------------- 启动向导 ---------------- */
 
   function showResult(status) {
+    finishPreparePanel();
     $('ring').classList.add('hidden');
     $('result').classList.remove('hidden');
     $('primary').disabled = false;
@@ -123,24 +369,46 @@
     }
     if (!base) return;
 
+    $('prepare').disabled = true;
+    $('primary').disabled = true;
+    const previousLead = $('lead').textContent;
+    $('lead').textContent = '正在检查下载需求…';
+    let plan = null;
+    try {
+      plan = await bridge.invoke('plan_env', { base: base });
+    } catch (error) {
+      plan = null;
+    }
+    if (plan && plan.download_bytes > 0) {
+      const confirmed = await confirmDownload(plan);
+      if (!confirmed) {
+        $('lead').textContent = previousLead;
+        $('prepare').disabled = false;
+        $('primary').disabled = false;
+        return;
+      }
+    }
+
     setBusy('正在准备环境，请勿关闭窗口…');
     $('prepare').disabled = true;
-
-    if (events) {
-      events.listen('env-progress', function (event) {
-        $('lead').textContent = event.payload;
-      });
-    }
+    $('primary').textContent = '准备中…';
+    startPreparePanel();
 
     try {
       const status = await bridge.invoke('prepare_env', { base: base });
       showResult(status);
       $('lead').textContent = '环境准备完成。';
     } catch (error) {
+      const reason = typeof error === 'string'
+        ? error
+        : (error && error.message) || '未知错误';
+      failPreparePanel(reason);
       $('ring').classList.add('hidden');
-      $('lead').textContent = '环境准备失败，详细信息见程序目录下的 nuitka-rs.log。';
+      const shortReason = reason.length > 64 ? reason.slice(0, 64) + '…' : reason;
+      $('lead').textContent = '环境准备失败：' + shortReason;
       $('primary').disabled = false;
       $('prepare').disabled = false;
+      $('primary').textContent = '重新准备';
       mode = 'prepare';
     }
   }
@@ -297,6 +565,55 @@
 
   function hideModal() {
     $('modalLayer').classList.add('hidden');
+  }
+
+  function finishConfirm(ok) {
+    $('confirmLayer').classList.add('hidden');
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    if (resolve) resolve(ok);
+  }
+
+  function confirmDownload(plan) {
+    return new Promise(function (resolve) {
+      confirmResolve = resolve;
+      $('confirmTitle').textContent = plan.title || '需要下载编译环境';
+      const body = $('confirmBody');
+      body.textContent = '';
+
+      const lead = document.createElement('p');
+      lead.className = 'confirm-lead';
+      lead.textContent = '下载完成后才会开始安装，取消不会改动现有环境。';
+      body.appendChild(lead);
+
+      const list = document.createElement('ul');
+      list.className = 'confirm-list';
+      (plan.items || []).forEach(function (item) {
+        const row = document.createElement('li');
+        const text = document.createElement('span');
+        text.textContent = item;
+        row.appendChild(text);
+        list.appendChild(row);
+      });
+      body.appendChild(list);
+
+      const total = document.createElement('p');
+      total.className = 'confirm-total';
+      total.textContent = '预计下载 ' + formatBytes(plan.download_bytes)
+        + ' · 磁盘占用约 ' + formatBytes(plan.disk_bytes);
+      body.appendChild(total);
+
+      const eta = document.createElement('p');
+      eta.className = 'confirm-eta';
+      eta.textContent = '按约 1 MB/s 估算，预计 ' + formatEta(plan.eta_seconds)
+        + '；实际速度会显示在准备页。';
+      body.appendChild(eta);
+
+      $('confirmOk').onclick = function () { finishConfirm(true); };
+      $('confirmCancel').onclick = function () { finishConfirm(false); };
+      $('confirmLayer').classList.remove('hidden');
+      $('confirmOk').focus();
+    });
   }
 
   /* ---------------- 主界面：表单 ---------------- */
@@ -601,6 +918,10 @@
 
   document.addEventListener('keydown', function (event) {
     if (event.key !== 'Escape') return;
+    if (!$('confirmLayer').classList.contains('hidden')) {
+      finishConfirm(false);
+      return;
+    }
     if ($('modalLayer').classList.contains('hidden')) return;
     hideModal();
     if (!building) showPage('config');
@@ -650,6 +971,7 @@
 
   /* ---------------- 启动 ---------------- */
 
+  bindPrepareEvents();
   bindSegmented('modeSeg', 'mode');
   bindSegmented('consoleSeg', 'console');
 
@@ -672,6 +994,14 @@
   });
 
   $('prepare').addEventListener('click', prepareEnv);
+
+  $('togglePrepareDetails').addEventListener('click', function () {
+    setPrepareDetails(!prep.expanded);
+  });
+
+  $('confirmLayer').addEventListener('click', function (event) {
+    if (event.target === $('confirmLayer')) finishConfirm(false);
+  });
 
   if (events) {
     events.listen('build-progress', function (event) {

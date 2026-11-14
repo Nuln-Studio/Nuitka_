@@ -61,40 +61,49 @@ fn resolve_msvc(python: PyVersion) -> Option<Toolchain> {
     let label = format!("MSVC {}", msvc.toolset);
 
     for root in scanmsvc::roots() {
-        let script = root
+        let vcvars = root
             .join("VC")
             .join("Auxiliary")
             .join("Build")
             .join("vcvars64.bat");
-        if !script.is_file() {
-            continue;
-        }
-        match vcvars_environment(&script) {
-            Ok(env) => {
-                let binary = find_in_path(&env, "cl.exe");
-                log::info(&format!(
-                    "使用 {label}，VC 环境来自 {}，cl.exe={}",
-                    script.display(),
-                    binary
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "未找到".to_string())
-                ));
-                return Some(Toolchain {
-                    kind: Kind::Msvc,
-                    label,
-                    env,
-                    path: None,
-                    // 版本写死：--msvc=latest 认不出新版本 VS，写死 14.50 反而能过
-                    nuitka_args: vec![format!(
-                        "--msvc={}.{}",
-                        msvc.toolset.major, msvc.toolset.minor
-                    )],
-                    binary,
-                });
+        let vsdev = root.join("Common7").join("Tools").join("VsDevCmd.bat");
+
+        // vcvars64 是首选；某些 Build Tools 安装里它不存在或初始化失败，
+        // 但 VsDevCmd.bat 仍然可用，不能因此掉到 winlibs。
+        for (script, args) in [(vcvars, Vec::<&str>::new()), (vsdev, vec!["-arch=x64"])] {
+            if !script.is_file() {
+                continue;
             }
-            Err(error) => {
-                log::error(&format!("加载 VC 环境失败（{}）：{error}", script.display()));
+            match vcvars_environment(&script, &args) {
+                Ok(env) => {
+                    let binary = find_in_path(&env, "cl.exe");
+                    log::info(&format!(
+                        "使用 {label}，VC 环境来自 {}，cl.exe={}",
+                        script.display(),
+                        binary
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "未找到".to_string())
+                    ));
+                    return Some(Toolchain {
+                        kind: Kind::Msvc,
+                        label,
+                        env,
+                        path: None,
+                        // 版本写死：--msvc=latest 认不出新版本 VS，写死 14.50 反而能过
+                        nuitka_args: vec![format!(
+                            "--msvc={}.{}",
+                            msvc.toolset.major, msvc.toolset.minor
+                        )],
+                        binary,
+                    });
+                }
+                Err(error) => {
+                    log::error(&format!(
+                        "加载 VC 环境失败（{}）：{error}",
+                        script.display()
+                    ));
+                }
             }
         }
     }
@@ -146,13 +155,18 @@ fn find_in_path(env: &[(String, String)], exe: &str) -> Option<PathBuf> {
     None
 }
 
-/// 运行 vcvars64.bat 并把结果环境抓下来。
+/// 运行 vcvars64.bat / VsDevCmd.bat，并把结果环境抓下来。
 #[cfg(windows)]
-fn vcvars_environment(script: &Path) -> Result<Vec<(String, String)>, String> {
+fn vcvars_environment(script: &Path, args: &[&str]) -> Result<Vec<(String, String)>, String> {
     use std::os::windows::process::CommandExt;
 
     // 必须用 raw_arg：cmd 不认 Rust 默认的引号转义，会把带空格的路径拆坏
-    let command_line = format!("call \"{}\" >nul 2>&1 && set", script.display());
+    let mut command_line = format!("call \"{}\"", script.display());
+    for arg in args {
+        command_line.push(' ');
+        command_line.push_str(arg);
+    }
+    command_line.push_str(" >nul 2>&1 && set");
     let output = crate::util::command("cmd.exe")
         .args(["/d", "/s", "/c"])
         .raw_arg(&command_line)
@@ -182,7 +196,7 @@ fn vcvars_environment(script: &Path) -> Result<Vec<(String, String)>, String> {
 }
 
 #[cfg(not(windows))]
-fn vcvars_environment(_script: &Path) -> Result<Vec<(String, String)>, String> {
+fn vcvars_environment(_script: &Path, _args: &[&str]) -> Result<Vec<(String, String)>, String> {
     Err("只有 Windows 需要 VC 环境".to_string())
 }
 
@@ -249,7 +263,10 @@ LIB=C:\\SDK\\Lib;C:\\VC\\Lib
     #[test]
     fn keeps_include_value_intact() {
         let env = parse_environment(SAMPLE);
-        let include = env.iter().find(|(key, _)| key == "INCLUDE").expect("include");
+        let include = env
+            .iter()
+            .find(|(key, _)| key == "INCLUDE")
+            .expect("include");
         assert_eq!(include.1, "C:\\SDK\\Include;C:\\VC\\Include");
     }
 
@@ -274,12 +291,14 @@ LIB=C:\\SDK\\Lib;C:\\VC\\Lib
                 )
             })
             .collect();
-        assert!(envs
-            .iter()
-            .any(|(key, value)| key == "INCLUDE" && value.as_deref() == Some("C:\\x")));
-        assert!(envs
-            .iter()
-            .any(|(key, value)| key == "PATH" && value.as_deref() == Some("C:\\bin")));
+        assert!(
+            envs.iter()
+                .any(|(key, value)| key == "INCLUDE" && value.as_deref() == Some("C:\\x"))
+        );
+        assert!(
+            envs.iter()
+                .any(|(key, value)| key == "PATH" && value.as_deref() == Some("C:\\bin"))
+        );
     }
 
     /// 排查用：`cargo test diag_print_toolchain -- --ignored --nocapture`
@@ -292,16 +311,31 @@ LIB=C:\\SDK\\Lib;C:\\VC\\Lib
         println!("roots: {:?}", scanmsvc::roots());
         let toolsets: Vec<String> = scanmsvc::scan()
             .iter()
-            .map(|item| format!("{} [{}] sdk={} env={}", item.toolset, item.install, item.sdk, item.env_ready))
+            .map(|item| {
+                format!(
+                    "{} [{}] sdk={} env={}",
+                    item.toolset, item.install, item.sdk, item.env_ready
+                )
+            })
             .collect();
         println!("msvc: {toolsets:?}");
         let gccs: Vec<String> = scangcc::scan()
             .iter()
-            .map(|item| format!("{} {} -> {}", item.version, item.path.display(), item.status().label()))
+            .map(|item| {
+                format!(
+                    "{} {} -> {}",
+                    item.version,
+                    item.path.display(),
+                    item.status().label()
+                )
+            })
             .collect();
         println!("gcc: {gccs:?}");
         let tool = resolve(PyVersion::new(3, 12, 16));
-        println!("resolved: {:?}", tool.as_ref().map(|item| item.label.clone()));
+        println!(
+            "resolved: {:?}",
+            tool.as_ref().map(|item| item.label.clone())
+        );
         for root in scanmsvc::roots() {
             let script = root
                 .join("VC")
@@ -309,14 +343,17 @@ LIB=C:\\SDK\\Lib;C:\\VC\\Lib
                 .join("Build")
                 .join("vcvars64.bat");
             println!("script {} exists={}", script.display(), script.is_file());
-            match vcvars_environment(&script) {
+            match vcvars_environment(&script, &[]) {
                 Ok(env) => println!("  env ok, {} vars", env.len()),
                 Err(error) => println!("  env error: {error}"),
             }
         }
         if let Some(tool) = &tool {
             println!("kind: {}", tool.kind_label());
-            println!("has INCLUDE: {}", tool.env.iter().any(|(key, _)| key == "INCLUDE"));
+            println!(
+                "has INCLUDE: {}",
+                tool.env.iter().any(|(key, _)| key == "INCLUDE")
+            );
         }
     }
 }

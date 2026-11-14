@@ -54,7 +54,6 @@ pub(crate) fn run<F: FnMut(&str)>(
         .arg("-m")
         .arg("nuitka")
         .arg("--onefile")
-        .arg("--assume-yes-for-downloads")
         .arg("--windows-console-mode=force")
         .arg(format!("--output-dir={}", workspace.display()))
         .arg("--output-filename=selfcheck");

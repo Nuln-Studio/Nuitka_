@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::nuitka;
+use crate::nuitka::bootstrap::{EnvPlan, plan};
 use crate::nuitka::build;
 use crate::nuitka::{EnvStatus, Report};
 
@@ -57,13 +58,20 @@ async fn export_diagnostics() -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn plan_env(base: String) -> Result<EnvPlan, String> {
+    tauri::async_runtime::spawn_blocking(move || plan(std::path::Path::new(&base)))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn prepare_env(app: AppHandle, base: String) -> Result<EnvStatus, String> {
     let dir = std::path::PathBuf::from(&base);
     let handle = app.clone();
 
     let prepared = tauri::async_runtime::spawn_blocking(move || {
-        nuitka::bootstrap::prepare(&dir, |stage| {
-            let _ = handle.emit("env-progress", stage);
+        nuitka::bootstrap::prepare(&dir, |event| {
+            let _ = handle.emit("env-progress", event);
         })
     })
     .await
@@ -73,15 +81,17 @@ async fn prepare_env(app: AppHandle, base: String) -> Result<EnvStatus, String> 
         Ok(ready) => {
             let _ = app.emit(
                 "env-progress",
-                format!(
-                    "环境已就绪：{}（Nuitka {}，自检{}）",
-                    ready.python.display(),
-                    ready.nuitka,
-                    if ready.verified {
-                        "通过".to_string()
-                    } else {
-                        format!("未通过：{}", ready.detail)
-                    }
+                nuitka::bootstrap::PrepareEvent::stage(
+                    "环境准备完成",
+                    format!(
+                        "Nuitka {} · 自检{}",
+                        ready.nuitka,
+                        if ready.verified {
+                            "通过".to_string()
+                        } else {
+                            format!("未通过：{}", ready.detail)
+                        }
+                    ),
                 ),
             );
             tauri::async_runtime::spawn_blocking(nuitka::status)
@@ -190,6 +200,7 @@ pub fn run() {
             cancel_build,
             open_log,
             open_path,
+            plan_env,
             prepare_env,
             enter_main
         ])

@@ -381,6 +381,216 @@ input { font: inherit; }
   50% { opacity: 1; }
 }
 
+.prepare {
+  margin-top: 13px;
+  padding: 14px 16px 13px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.prepare-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.prepare-heading { min-width: 0; }
+
+.prepare-stage {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prepare-sub {
+  margin: 3px 0 0;
+  font-size: 10.5px;
+  line-height: 15px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prepare-time {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress {
+  position: relative;
+  height: 8px;
+  margin-top: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--line-2) 0 1px,
+    transparent 1px 10%
+  );
+  opacity: 0.5;
+}
+
+.progress-fill {
+  width: 0;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width 0.22s linear;
+}
+
+/* 无精确进度时让填充持续扫过，明确表示“还在跑”，避免空槽被误认为卡死 */
+.progress.indeterminate .progress-fill {
+  width: 34%;
+  opacity: 0.9;
+  animation: progress-sweep 1.35s linear infinite;
+}
+
+/* 两端各留一小截可见，扫动过程中不会出现完全空槽的瞬间 */
+@keyframes progress-sweep {
+  0% { transform: translateX(-85%); }
+  100% { transform: translateX(280%); }
+}
+
+.prepare-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 16px;
+  margin-top: 12px;
+}
+
+.metric {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.metric-key {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.07em;
+  color: var(--ink-3);
+}
+
+.metric-val {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 15px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.signal {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 10px;
+  flex: 0 0 auto;
+}
+
+.signal i {
+  display: block;
+  width: 3px;
+  border-radius: 1px;
+  background: var(--line-3);
+}
+
+.signal i:nth-child(1) { height: 3px; }
+.signal i:nth-child(2) { height: 5px; }
+.signal i:nth-child(3) { height: 7px; }
+.signal i:nth-child(4) { height: 9px; }
+
+.signal.q1 i:nth-child(1),
+.signal.q2 i:nth-child(1),
+.signal.q2 i:nth-child(2),
+.signal.q3 i:nth-child(1),
+.signal.q3 i:nth-child(2),
+.signal.q3 i:nth-child(3),
+.signal.q4 i {
+  background: var(--accent);
+}
+
+.prepare-info-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.prepare-info-row .prepare-info {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prepare-toggle {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 15px;
+  color: var(--ink-3);
+}
+
+.prepare-toggle:hover { color: var(--accent); }
+
+.prepare-details {
+  margin-top: 5px;
+}
+
+.prepare-log {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 64px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 14px;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .result {
   --level: var(--line-3);
   position: relative;
@@ -1167,6 +1377,61 @@ input { font: inherit; }
   margin-top: 18px;
 }
 
+.modal.confirm h3::before { background: var(--accent); }
+
+.confirm-body {
+  font-size: 12.5px;
+  line-height: 20px;
+  color: var(--ink-2);
+}
+
+.confirm-body .confirm-lead {
+  margin: 0 0 10px;
+  color: var(--ink);
+}
+
+.confirm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--ink-2);
+}
+
+.confirm-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.confirm-list li span:last-child {
+  color: var(--ink-3);
+  text-align: right;
+}
+
+.confirm-total {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 17px;
+  color: var(--ink-2);
+}
+
+.confirm-eta {
+  margin: 5px 0 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--ink-3);
+}
+
 @keyframes fade {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -1225,4 +1490,10 @@ input { font: inherit; }
   .modal-layer,
   .modal { animation: none; }
   .loader i { animation: none; opacity: 1; }
+  .progress.indeterminate .progress-fill {
+    width: 36%;
+    opacity: 0.45;
+    transform: none;
+    animation: none;
+  }
 }
