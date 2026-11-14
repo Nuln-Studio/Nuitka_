@@ -1,10 +1,16 @@
 use std::path::{Path, PathBuf};
 
 use crate::nuitka::python_discovery::PyVersion;
-use crate::nuitka::{fetch, lock, log, paths, selfcheck, toolchain};
+use crate::nuitka::{fetch, lock, log, paths, scannuitka, selfcheck, toolchain};
 
-const PYTHON_LINE: &str = "3.12";
-const PYTHON_VERSION: PyVersion = PyVersion::new(3, 12, 0);
+pub(crate) const PYTHON_CHOICES: &[(&str, &str, bool)] = &[
+    ("3.11", "Python 3.11", false),
+    ("3.12", "Python 3.12", false),
+    ("3.13", "Python 3.13", false),
+    ("3.14", "Python 3.14", true),
+];
+const DEFAULT_PYTHON_LINE: &str = "3.12";
+const NUITKA_LATEST: &str = "4.3.5";
 const MIRROR: &str = "https://pypi.tuna.tsinghua.edu.cn/simple";
 const MIRROR_BASE: &str =
     "https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone/LatestRelease/";
@@ -13,6 +19,82 @@ const RELEASE_API: &str =
 const WINLIBS_FALLBACK_SIZE: u64 = 267_135_426;
 const WINLIBS_DISK_SIZE: u64 = 773_815_574;
 const MIB: u64 = 1024 * 1024;
+
+pub(crate) fn parse_python_line(line: &str) -> Option<PyVersion> {
+    let (major, minor) = line.trim().split_once('.')?;
+    let major: u8 = major.parse().ok()?;
+    let minor: u8 = minor.parse().ok()?;
+    PYTHON_CHOICES
+        .iter()
+        .any(|(value, _, _)| *value == line.trim())
+        .then(|| PyVersion::new(major, minor, 0))
+}
+
+pub(crate) fn selected_python_line() -> String {
+    paths::selected_python()
+        .filter(|line| parse_python_line(line).is_some())
+        .unwrap_or_else(|| DEFAULT_PYTHON_LINE.to_string())
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct PythonChoice {
+    pub version: String,
+    pub label: String,
+    pub support: String,
+    pub recommended: bool,
+    pub nuitka: String,
+    pub compiler: String,
+    pub warning: String,
+    pub can_prepare: bool,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct PythonOptions {
+    pub selected: String,
+    pub versions: Vec<PythonChoice>,
+}
+
+pub(crate) fn python_options() -> PythonOptions {
+    let msvcs = crate::nuitka::scanmsvc::scan();
+    let gccs = crate::nuitka::scangcc::scan();
+    let versions = PYTHON_CHOICES
+        .iter()
+        .map(|(line, label, recommended)| {
+            let version = parse_python_line(line).unwrap_or(PyVersion::new(3, 12, 0));
+            let msvc = crate::nuitka::scanmsvc::best(&msvcs, version);
+            let gcc = crate::nuitka::scangcc::best(&gccs);
+            let (compiler, warning) = if let Some(item) = msvc {
+                (format!("MSVC {}", item.toolset), String::new())
+            } else if let Some(item) = gcc {
+                (
+                    format!("gcc {}", item.version),
+                    "本机 MSVC 不满足该 Python，准备时使用 Nuitka 自带的 winlibs。"
+                        .to_string(),
+                )
+            } else {
+                (
+                    "winlibs（准备时下载）".to_string(),
+                    "本机没有匹配的 MSVC/GCC，准备时下载 winlibs 编译器。".to_string(),
+                )
+            };
+            PythonChoice {
+                version: line.to_string(),
+                label: label.to_string(),
+                support: "完全支持".to_string(),
+                recommended: *recommended,
+                nuitka: format!("Nuitka {NUITKA_LATEST}"),
+                compiler,
+                warning,
+                can_prepare: true,
+            }
+        })
+        .collect();
+
+    PythonOptions {
+        selected: selected_python_line(),
+        versions,
+    }
+}
 
 pub(crate) struct Ready {
     pub nuitka: String,
@@ -81,9 +163,12 @@ impl PrepareEvent {
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct EnvPlan {
     pub title: String,
+    pub python: String,
     pub items: Vec<String>,
     pub download_bytes: u64,
     pub disk_bytes: u64,
+    pub full_seconds: u64,
+    pub measured_seconds: u64,
     pub eta_seconds: u64,
 }
 
@@ -94,12 +179,13 @@ struct WinlibsInfo {
     total: u64,
 }
 
-pub(crate) fn plan(base: &Path) -> EnvPlan {
-    let python_home = base.join("python").join(PYTHON_LINE);
+pub(crate) fn plan(base: &Path, python_line: &str) -> EnvPlan {
+    let python_version = parse_python_line(python_line).unwrap_or(PyVersion::new(3, 12, 0));
+    let python_home = base.join("python").join(python_line);
     let python = python_home.join("python.exe");
     let has_python = python.is_file();
     let has_nuitka = has_python && fetch::run(&python, &["-m", "nuitka", "--version"]).is_ok();
-    let tool = toolchain::resolve(PYTHON_VERSION);
+    let tool = toolchain::resolve(python_version);
     let winlibs_total = if tool.is_none() {
         if has_python {
             winlibs_info(&python)
@@ -134,41 +220,70 @@ pub(crate) fn plan(base: &Path) -> EnvPlan {
     let mut items = Vec::new();
     let mut download_bytes = 0u64;
     let mut disk_bytes = 0u64;
+
+    items.push(format!(
+        "便携 Python  约 24 MB · {}",
+        if has_python { "已就绪" } else { "需下载" }
+    ));
+    items.push(format!(
+        "Nuitka 及依赖  约 30 MB · {}",
+        if has_nuitka { "已就绪" } else { "需安装" }
+    ));
+    let compiler = if let Some(tool) = &tool {
+        format!("{} · 已就绪", tool.label)
+    } else if winlibs_needed {
+        "winlibs · 需下载".to_string()
+    } else {
+        "winlibs · 已就绪".to_string()
+    };
+    items.push(format!("编译器  {compiler}"));
+
     if !has_python {
-        items.push("便携 Python  约 24 MB".to_string());
         download_bytes += 24 * MIB;
         disk_bytes += 144 * MIB;
     }
     if !has_nuitka {
-        items.push("Nuitka 及依赖  约 30 MB".to_string());
         download_bytes += 30 * MIB;
         disk_bytes += 180 * MIB;
     }
     if winlibs_needed {
-        items.push(format!(
-            "winlibs 编译器  {}（解压后约 {}）",
-            human_bytes(winlibs_total),
-            human_bytes(WINLIBS_DISK_SIZE)
-        ));
         download_bytes += winlibs_total;
         disk_bytes += WINLIBS_DISK_SIZE + winlibs_total;
     }
-    let eta_seconds = if download_bytes == 0 {
-        0
-    } else {
-        (download_bytes / MIB).max(1)
+
+    // 开发者实测：网络好的情况下，从零建完整套约 13 分钟。
+    // 再按本机 CPU 核数和本次缺少的组件做本地预估。
+    let cores = std::thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(4);
+    let factor = match cores {
+        0..=2 => 1.25,
+        3..=4 => 1.10,
+        5..=8 => 1.00,
+        _ => 0.90,
     };
-    let title = if winlibs_needed {
-        "需要下载编译器组件"
-    } else {
-        "需要下载编译环境"
-    };
+    let measured_seconds = 13 * 60;
+    let full_seconds = (measured_seconds as f64 * factor).round() as u64;
+    let mut eta_seconds = full_seconds as i64;
+    if has_python {
+        eta_seconds -= (90.0 * factor).round() as i64;
+    }
+    if has_nuitka {
+        eta_seconds -= (90.0 * factor).round() as i64;
+    }
+    if !winlibs_needed {
+        eta_seconds -= (300.0 * factor).round() as i64;
+    }
+    let eta_seconds = eta_seconds.max(60) as u64;
 
     EnvPlan {
-        title: title.to_string(),
+        title: "从零建立完整编译环境".to_string(),
+        python: python_line.to_string(),
         items,
         download_bytes,
         disk_bytes,
+        full_seconds,
+        measured_seconds,
         eta_seconds,
     }
 }
@@ -331,13 +446,16 @@ fn download_winlibs<F: FnMut(PrepareEvent)>(
 /// 准备便携 Python + Nuitka，最后真编一个程序验证这条链路是通的。
 pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
     base: &Path,
+    python_line: &str,
     mut progress: F,
 ) -> Result<Ready, String> {
+    let python_version =
+        parse_python_line(python_line).ok_or_else(|| format!("不支持的 Python 版本：{python_line}"))?;
     // 同一个安装目录只允许一个流程在跑
     let _guard = lock::acquire(base)?;
     paths::set_base(base)?;
 
-    let python_home = base.join("python").join(PYTHON_LINE);
+    let python_home = base.join("python").join(python_line);
     let python = python_home.join("python.exe");
 
     log::info(&format!("开始准备环境：{}", base.display()));
@@ -347,7 +465,7 @@ pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
             "解析便携 Python 下载地址",
             "优先国内镜像，失败后回退 GitHub",
         ));
-        let archive = ensure_archive(base, &mut progress)?;
+        let archive = ensure_archive(base, python_line, &mut progress)?;
         progress(PrepareEvent::stage(
             "解压便携 Python",
             archive
@@ -365,14 +483,22 @@ pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
     let version = fetch::run(&python, &["--version"])?;
     log::info(&format!("Python：{version}"));
 
-    // 已经装好的就别再走网络，不然“验证一次”会卡在 pip 上
+    // 已经装好的还要确认它真的支持当前选的 Python；不支持就升级到最新版
     let nuitka_ready = fetch::run(&python, &["-m", "nuitka", "--version"]).is_ok();
-    if nuitka_ready {
+    let nuitka_supports = nuitka_ready
+        && scannuitka::supports(&python, python_version).unwrap_or(false);
+    if nuitka_ready && nuitka_supports {
         progress(PrepareEvent::stage(
             "检测到已安装的 Nuitka，跳过安装",
-            "无需从 PyPI 下载",
+            format!("Nuitka 已支持 Python {python_line}"),
         ));
     } else {
+        if nuitka_ready {
+            progress(PrepareEvent::stage(
+                "升级 Nuitka",
+                format!("当前 Nuitka 不适配 Python {python_line}，升级到最新版"),
+            ));
+        }
         progress(PrepareEvent::stage("安装 pip", "ensurepip · 自更新 pip"));
         if let Err(error) =
             fetch::run_streaming(&python, &["-m", "ensurepip", "--upgrade"], &[], |line| {
@@ -416,7 +542,7 @@ pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
         "检测编译器",
         "优先复用已安装的 MSVC，缺失时才用 Nuitka winlibs",
     ));
-    let mut tool = toolchain::resolve(PYTHON_VERSION);
+    let mut tool = toolchain::resolve(python_version);
     let raw = if let Some(tool) = tool.as_ref() {
         progress(PrepareEvent::stage(
             "使用已有编译器，跳过下载",
@@ -426,7 +552,7 @@ pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
     } else {
         let raw = ensure_compiler(&python, &mut progress)?;
         // winlibs 刚解压好，重新扫描一次，让自检/打包拿到 --mingw64 和 PATH
-        tool = toolchain::resolve(PYTHON_VERSION);
+        tool = toolchain::resolve(python_version);
         if let Some(tool) = tool.as_ref() {
             progress(PrepareEvent::log(format!(
                 "winlibs 编译器已就绪：{}",
@@ -484,10 +610,11 @@ pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
 /// 拿到一个校验过、可以解压的压缩包。
 fn ensure_archive<F: FnMut(PrepareEvent)>(
     base: &Path,
+    python_line: &str,
     progress: &mut F,
 ) -> Result<PathBuf, String> {
     let downloads = base.join("downloads");
-    let candidates = candidates();
+    let candidates = candidates(python_line);
     if candidates.is_empty() {
         return Err("没有拿到可用的下载地址，请检查网络或 NUITKA_RS_PBS_URL".to_string());
     }
@@ -595,7 +722,7 @@ fn expected_hash(url: &str, name: &str) -> Option<String> {
 }
 
 /// 环境变量直链 → 国内镜像 → GitHub API，按顺序尝试。
-fn candidates() -> Vec<(String, String)> {
+fn candidates(python_line: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
 
     if let Ok(raw) = std::env::var("NUITKA_RS_PBS_URL") {
@@ -612,10 +739,10 @@ fn candidates() -> Vec<(String, String)> {
         }
     }
 
-    if let Ok(pair) = mirror_asset() {
+    if let Ok(pair) = mirror_asset(python_line) {
         out.push(pair);
     }
-    if let Ok(pair) = github_asset() {
+    if let Ok(pair) = github_asset(python_line) {
         out.push(pair);
     }
 
@@ -657,14 +784,17 @@ fn ensure_zstandard<F: FnMut(PrepareEvent)>(python: &Path, progress: &mut F) {
     }
 }
 
-fn mirror_asset() -> Result<(String, String), String> {
+fn mirror_asset(python_line: &str) -> Result<(String, String), String> {
     let base = std::env::var("NUITKA_RS_PBS_BASE").unwrap_or_else(|_| MIRROR_BASE.to_string());
     let html = curl_text(&base)?;
-    pick_asset(&html, &base).ok_or_else(|| "镜像目录里没找到 3.12 的 Windows 便携包".to_string())
+    pick_asset(&html, &base, python_line).ok_or_else(|| {
+        format!("镜像目录里没找到 Python {python_line} 的 Windows 便携包")
+    })
 }
 
-fn pick_asset(html: &str, base: &str) -> Option<(String, String)> {
+fn pick_asset(html: &str, base: &str, python_line: &str) -> Option<(String, String)> {
     let mut position = 0;
+    let prefix = format!("cpython-{python_line}.");
 
     while let Some(found) = html[position..].find("href=\"") {
         let start = position + found + 6;
@@ -673,7 +803,7 @@ fn pick_asset(html: &str, base: &str) -> Option<(String, String)> {
         position = start + end;
 
         let decoded = decode(href);
-        let matched = decoded.starts_with("cpython-3.12.")
+        let matched = decoded.starts_with(&prefix)
             && decoded.contains("x86_64-pc-windows-msvc")
             && decoded.contains("install_only_stripped.tar.gz");
         if matched {
@@ -689,7 +819,7 @@ fn pick_asset(html: &str, base: &str) -> Option<(String, String)> {
     None
 }
 
-fn github_asset() -> Result<(String, String), String> {
+fn github_asset(python_line: &str) -> Result<(String, String), String> {
     let body = curl_text(RELEASE_API)?;
     let json: serde_json::Value =
         serde_json::from_str(&body).map_err(|error| format!("解析 GitHub 返回失败：{error}"))?;
@@ -702,7 +832,7 @@ fn github_asset() -> Result<(String, String), String> {
         let Some(name) = asset.get("name").and_then(|value| value.as_str()) else {
             continue;
         };
-        let matched = name.starts_with("cpython-3.12.")
+        let matched = name.starts_with(&format!("cpython-{python_line}."))
             && name.contains("x86_64-pc-windows-msvc")
             && name.contains("install_only_stripped")
             && name.ends_with(".tar.gz");
@@ -756,8 +886,8 @@ mod tests {
             .map(PathBuf::from)
             .unwrap()
             .join("Nuitka++");
-        println!("plan: {:?}", plan(&base));
-        let python = base.join("python").join(PYTHON_LINE).join("python.exe");
+        println!("plan: {:?}", plan(&base, "3.12"));
+        let python = base.join("python").join("3.12").join("python.exe");
         if python.is_file() {
             let info = winlibs_info(&python);
             match info {
@@ -781,7 +911,8 @@ mod tests {
 
     #[test]
     fn picks_windows_x86_64_asset() {
-        let (url, name) = pick_asset(SAMPLE, "https://mirror.example/base/").expect("asset");
+        let (url, name) = pick_asset(SAMPLE, "https://mirror.example/base/", "3.12")
+            .expect("asset");
         assert_eq!(
             name,
             "cpython-3.12.16+20261110-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
@@ -792,7 +923,7 @@ mod tests {
     #[test]
     fn ignores_other_platforms() {
         let only_arm = r#"<a href="cpython-3.12.16%2B20261110-aarch64-pc-windows-msvc-install_only_stripped.tar.gz">y</a>"#;
-        assert!(pick_asset(only_arm, "https://mirror.example/").is_none());
+        assert!(pick_asset(only_arm, "https://mirror.example/", "3.12").is_none());
     }
 
     #[test]

@@ -23,8 +23,11 @@
     console: 'force',
     progress: true,
     download: true,
-    extra: ''
+    extra: '',
+    pythonChoice: '3.12',
+    pythonCanPrepare: true
   };
+  let pythonChoices = [];
 
   let mode = 'enter';
   let reportLoaded = false;
@@ -41,6 +44,7 @@
     logs: []
   };
   let confirmResolve = null;
+  let pythonResolve = null;
 
   /* ---------------- 通用 ---------------- */
 
@@ -100,6 +104,16 @@
     if (seconds < 60) return Math.ceil(seconds) + ' 秒';
     if (seconds < 3600) return Math.ceil(seconds / 60) + ' 分';
     return (seconds / 3600).toFixed(1) + ' 小时';
+  }
+
+  function formatMinutes(seconds) {
+    return Math.max(1, Math.round(seconds / 60)) + ' 分钟';
+  }
+
+  function formatMinuteRange(seconds, factor) {
+    const low = Math.max(1, Math.round(seconds / 60));
+    const high = Math.max(low, Math.round(seconds * factor / 60));
+    return low + '–' + high + ' 分钟';
   }
 
   function sourceLabel(source) {
@@ -333,12 +347,131 @@
     if (status.ready) {
       mode = 'enter';
       $('primary').textContent = '进入主界面';
+      $('primary').title = '进入主界面';
       $('lead').textContent = '环境检查完成。';
     } else {
       mode = 'prepare';
       $('primary').textContent = '立即准备环境';
+      $('primary').title = '选择 Python 版本并准备编译环境';
       $('lead').textContent = '环境尚不完整。';
     }
+  }
+
+  function currentPythonChoice() {
+    return pythonChoices.find(function (item) {
+      return item.version === state.pythonChoice;
+    });
+  }
+
+  function paintPythonChoice() {
+    const choice = currentPythonChoice();
+    document.querySelectorAll('.python-option').forEach(function (option) {
+      const selected = option.dataset.version === state.pythonChoice;
+      option.classList.toggle('selected', selected);
+      option.setAttribute('aria-checked', selected ? 'true' : 'false');
+    });
+
+    const warning = $('pythonModalWarning');
+    if (!choice) {
+      $('pythonConfirm').disabled = true;
+      warning.textContent = '版本信息不可用，请关闭窗口后重试。';
+      warning.classList.remove('hidden');
+      warning.classList.add('bad');
+      state.pythonCanPrepare = false;
+      return;
+    }
+
+    state.pythonCanPrepare = choice.can_prepare !== false;
+    $('pythonConfirm').disabled = !state.pythonCanPrepare;
+    warning.textContent = choice.warning || '';
+    warning.classList.toggle('hidden', !choice.warning);
+    warning.classList.toggle('bad', !state.pythonCanPrepare);
+  }
+
+  function renderPythonOptions() {
+    const wrap = $('pythonOptions');
+    wrap.textContent = '';
+    pythonChoices.forEach(function (choice) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'python-option';
+      button.dataset.version = choice.version;
+      button.setAttribute('role', 'radio');
+
+      const main = document.createElement('span');
+      main.className = 'python-option-main';
+
+      const title = document.createElement('span');
+      title.className = 'python-option-title';
+      title.appendChild(document.createTextNode(choice.label || ('Python ' + choice.version)));
+      if (choice.recommended) {
+        const tag = document.createElement('span');
+        tag.className = 'python-option-tag';
+        tag.textContent = '推荐';
+        title.appendChild(tag);
+      }
+
+      const meta = document.createElement('span');
+      meta.className = 'python-option-meta' + (choice.warning ? ' warn' : '');
+      meta.textContent = (choice.nuitka || 'Nuitka') + ' · ' + (choice.compiler || '编译器待检测');
+      meta.title = choice.warning || '';
+
+      main.appendChild(title);
+      main.appendChild(meta);
+
+      const check = document.createElement('span');
+      check.className = 'python-option-check';
+      check.setAttribute('aria-hidden', 'true');
+
+      button.appendChild(main);
+      button.appendChild(check);
+      button.addEventListener('click', function () {
+        state.pythonChoice = choice.version;
+        paintPythonChoice();
+      });
+      wrap.appendChild(button);
+    });
+    paintPythonChoice();
+  }
+
+  async function loadPythonChoices() {
+    if (!bridge) return;
+    try {
+      const data = await bridge.invoke('python_options');
+      pythonChoices = data.versions || [];
+      const selected = data.selected || state.pythonChoice;
+      if (pythonChoices.some(function (item) { return item.version === selected; })) {
+        state.pythonChoice = selected;
+      } else if (pythonChoices.length) {
+        state.pythonChoice = pythonChoices[0].version;
+      }
+      renderPythonOptions();
+    } catch (error) {
+      pythonChoices = [];
+      renderPythonOptions();
+    }
+  }
+
+  function choosePython() {
+    return new Promise(function (resolve) {
+      if (!pythonChoices.length) {
+        $('lead').textContent = 'Python 版本信息加载失败，请稍后重试。';
+        resolve(false);
+        return;
+      }
+      pythonResolve = resolve;
+      renderPythonOptions();
+      $('pythonLayer').classList.remove('hidden');
+      const chosen = $('pythonOptions').querySelector('.python-option.selected');
+      (chosen || $('pythonConfirm')).focus();
+    });
+  }
+
+  function finishPython(ok) {
+    $('pythonLayer').classList.add('hidden');
+    const resolve = pythonResolve;
+    pythonResolve = null;
+    if (resolve) resolve(ok);
   }
 
   async function refreshStatus() {
@@ -361,6 +494,11 @@
   }
 
   async function prepareEnv() {
+    if (!pythonChoices.length) await loadPythonChoices();
+    const picked = await choosePython();
+    if (!picked) return;
+    const python = state.pythonChoice || '3.12';
+
     let base = null;
     try {
       base = await bridge.invoke('pick_dir', { title: '选择环境安装目录' });
@@ -375,7 +513,7 @@
     $('lead').textContent = '正在检查下载需求…';
     let plan = null;
     try {
-      plan = await bridge.invoke('plan_env', { base: base });
+      plan = await bridge.invoke('plan_env', { base: base, python: python });
     } catch (error) {
       plan = null;
     }
@@ -395,7 +533,7 @@
     startPreparePanel();
 
     try {
-      const status = await bridge.invoke('prepare_env', { base: base });
+      const status = await bridge.invoke('prepare_env', { base: base, python: python });
       showResult(status);
       $('lead').textContent = '环境准备完成。';
     } catch (error) {
@@ -583,8 +721,25 @@
 
       const lead = document.createElement('p');
       lead.className = 'confirm-lead';
-      lead.textContent = '下载完成后才会开始安装，取消不会改动现有环境。';
+      lead.textContent = '目标 Python ' + (plan.python || state.pythonChoice)
+        + '：包含 Nuitka、编译器和首次编译自检。';
       body.appendChild(lead);
+
+      const hero = document.createElement('div');
+      hero.className = 'confirm-hero';
+      const local = document.createElement('div');
+      local.className = 'confirm-hero-item';
+      local.innerHTML = '<span>本机预计</span><strong>'
+        + formatMinuteRange(plan.full_seconds, 1.2)
+        + '</strong><small>从零建立，网络好</small>';
+      const measured = document.createElement('div');
+      measured.className = 'confirm-hero-item';
+      measured.innerHTML = '<span>开发者实测</span><strong>'
+        + formatMinutes(plan.measured_seconds)
+        + '</strong><small>网络好的成绩</small>';
+      hero.appendChild(local);
+      hero.appendChild(measured);
+      body.appendChild(hero);
 
       const list = document.createElement('ul');
       list.className = 'confirm-list';
@@ -599,13 +754,15 @@
 
       const total = document.createElement('p');
       total.className = 'confirm-total';
-      total.textContent = '预计下载 ' + formatBytes(plan.download_bytes)
+      total.textContent = '本次下载 ' + formatBytes(plan.download_bytes)
         + ' · 磁盘占用约 ' + formatBytes(plan.disk_bytes);
       body.appendChild(total);
 
       const eta = document.createElement('p');
       eta.className = 'confirm-eta';
-      eta.textContent = '亲测用时13分钟。';
+      eta.textContent = '本次预计约 '
+        + formatMinutes(plan.eta_seconds)
+        + '（按当前缺少的组件和本机 CPU 估算）。';
       body.appendChild(eta);
 
       $('confirmOk').onclick = function () { finishConfirm(true); };
@@ -998,6 +1155,22 @@
     setPrepareDetails(!prep.expanded);
   });
 
+  $('pythonConfirm').addEventListener('click', function () {
+    if (!state.pythonCanPrepare) return;
+    finishPython(true);
+  });
+  $('pythonCancel').addEventListener('click', function () { finishPython(false); });
+  $('pythonLayer').addEventListener('click', function (event) {
+    if (event.target === $('pythonLayer')) finishPython(false);
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') return;
+    if (!$('pythonLayer').classList.contains('hidden')) {
+      event.preventDefault();
+      finishPython(false);
+    }
+  });
+
   $('confirmLayer').addEventListener('click', function (event) {
     if (event.target === $('confirmLayer')) finishConfirm(false);
   });
@@ -1030,5 +1203,8 @@
     });
   }
 
-  window.addEventListener('DOMContentLoaded', refreshStatus);
+  window.addEventListener('DOMContentLoaded', function () {
+    loadPythonChoices();
+    refreshStatus();
+  });
 })();

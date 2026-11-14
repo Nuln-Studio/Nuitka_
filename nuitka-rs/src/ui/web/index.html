@@ -99,7 +99,7 @@
   <div class="wizard-foot">
     <span class="foot-mark">NUITKA++ / 0.1.0</span>
     <span class="grow"></span>
-    <button class="btn secondary" id="prepare">准备环境</button>
+    <button class="btn secondary" id="prepare" title="选择 Python 版本并准备编译环境">准备环境</button>
     <button class="btn primary" id="primary" disabled>请稍候</button>
   </div>
 </div>
@@ -305,6 +305,20 @@
     <div class="modal-actions">
       <button class="btn secondary" id="modalLog">打开日志</button>
       <button class="btn primary" id="modalClose">知道了</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-layer hidden" id="pythonLayer">
+  <div class="modal python-modal" role="dialog" aria-modal="true" aria-labelledby="pythonModalTitle">
+    <h3 id="pythonModalTitle">选择目标 Python</h3>
+    <p class="python-modal-lead">Nuitka 和编译器会按所选版本自动匹配；不满足时会在这里提示。</p>
+    <div class="python-options" id="pythonOptions" role="radiogroup" aria-label="目标 Python"></div>
+    <p class="python-modal-warning hidden" id="pythonModalWarning"></p>
+    <p class="modal-note">该版本会用于本次准备、环境检测和之后的打包。</p>
+    <div class="modal-actions">
+      <button class="btn secondary" id="pythonCancel">取消</button>
+      <button class="btn primary" id="pythonConfirm">用这个版本</button>
     </div>
   </div>
 </div>

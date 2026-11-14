@@ -144,7 +144,10 @@ pub(crate) fn select_python() -> Result<PythonCandidate> {
 }
 
 pub(crate) fn select_nuitka() -> Vec<Nuitka> {
-    let interpreters = python_discovery::scan(&python_discovery::Policy::default());
+    let mut interpreters = python_discovery::scan(&python_discovery::Policy::default());
+    if let Ok(selected) = select_python() {
+        interpreters.retain(|python| python.executable == selected.path);
+    }
     scannuitka::scan(&interpreters)
 }
 

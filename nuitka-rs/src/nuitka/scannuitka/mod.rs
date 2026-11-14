@@ -144,6 +144,17 @@ pub fn report(items: &[Nuitka], requirement: &Requirement) -> String {
     out
 }
 
+/// 判断某个 Python 版本是否被当前 Nuitka 完整支持；探针失败返回 None。
+pub(crate) fn supports(python: &std::path::Path, version: PyVersion) -> Option<bool> {
+    let record = probe::probe(python, Duration::from_secs(5))?;
+    let supported = record
+        .supported
+        .iter()
+        .chain(record.partial.iter())
+        .any(|item| item.major == version.major && item.minor == version.minor);
+    Some(supported)
+}
+
 pub fn scan(interpreters: &[Python]) -> Vec<Nuitka> {
     let timeout = Duration::from_secs(5);
     let mut out = Vec::new();

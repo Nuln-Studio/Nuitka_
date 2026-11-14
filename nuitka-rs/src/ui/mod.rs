@@ -1,7 +1,9 @@
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::nuitka;
-use crate::nuitka::bootstrap::{EnvPlan, plan};
+use crate::nuitka::bootstrap::{
+    EnvPlan, PythonOptions, plan, python_options as build_python_options,
+};
 use crate::nuitka::build;
 use crate::nuitka::{EnvStatus, Report};
 
@@ -58,19 +60,29 @@ async fn export_diagnostics() -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn plan_env(base: String) -> Result<EnvPlan, String> {
-    tauri::async_runtime::spawn_blocking(move || plan(std::path::Path::new(&base)))
+async fn python_options() -> Result<PythonOptions, String> {
+    tauri::async_runtime::spawn_blocking(build_python_options)
         .await
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-async fn prepare_env(app: AppHandle, base: String) -> Result<EnvStatus, String> {
+async fn plan_env(base: String, python: String) -> Result<EnvPlan, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        plan(std::path::Path::new(&base), &python)
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn prepare_env(app: AppHandle, base: String, python: String) -> Result<EnvStatus, String> {
     let dir = std::path::PathBuf::from(&base);
     let handle = app.clone();
+    let python_line = python.clone();
 
     let prepared = tauri::async_runtime::spawn_blocking(move || {
-        nuitka::bootstrap::prepare(&dir, |event| {
+        nuitka::bootstrap::prepare(&dir, &python_line, |event| {
             let _ = handle.emit("env-progress", event);
         })
     })
@@ -79,6 +91,7 @@ async fn prepare_env(app: AppHandle, base: String) -> Result<EnvStatus, String> 
 
     match prepared {
         Ok(ready) => {
+            let _ = nuitka::paths::set_python(&python);
             let _ = app.emit(
                 "env-progress",
                 nuitka::bootstrap::PrepareEvent::stage(
@@ -200,6 +213,7 @@ pub fn run() {
             cancel_build,
             open_log,
             open_path,
+            python_options,
             plan_env,
             prepare_env,
             enter_main
