@@ -20,7 +20,7 @@
 ***
 **Build a Python EXE from scratch — even if you don't have Python installed, even if Nuitka isn't set up, even if no suitable C compiler is available. Nuitka++ handles it all in one click!**
 
-`Once the app is downloaded, if your environment is incomplete, click "Prepare Environment" or "Prepare Now", then pick the Python version or C compiler you need (Python 3.12+ requires MSVC), confirm, and the app will configure everything automatically.`
+`Once the app is downloaded, if your environment is incomplete, click "Prepare Environment" or "Prepare Now", then pick the Python version or C compiler you need (Python 3.13 and above requires MSVC), confirm, and the app will configure everything automatically.`
 | Your environment is decent | Your environment is a mess |
 | -- | -- |
 | ![Decent](docs/screenshots/haibucuo.png) | ![Mess](docs/screenshots/buzadi.png) |
