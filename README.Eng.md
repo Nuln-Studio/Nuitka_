@@ -96,6 +96,8 @@ See [项目结构.md](项目结构.md) for the full directory tree and design co
 | [scannuitka.md](nuitka-rs/src/nuitka/scannuitka/scannuitka.md) | Nuitka discovery and version matrix |
 | [scanmsvc.md](nuitka-rs/src/nuitka/scanmsvc/scanmsvc.md) | MSVC discovery and version requirements |
 | [scangcc.md](nuitka-rs/src/nuitka/scangcc/scangcc.md) | gcc / winlibs discovery and PATH conflict detection |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Contributing guide: branch names, commits, quality gates, code conventions |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Code of conduct |
 
 ## Design trade-offs
 
@@ -109,3 +111,25 @@ See [项目结构.md](项目结构.md) for the full directory tree and design co
 - Standalone mode (`--standalone`) follows the same execution path but has not been verified end-to-end
 - If your VS version is newer than Nuitka's known list, detection may fail; pin the version with the `NUITKA_RS_MSVC=14.50` environment variable
 - No dark/light theme toggle yet — light only (maybe someday)
+
+## Contributing
+
+PRs are welcome. Code isn't the only thing that counts: a reproducible issue, a stretch of log, a screenshot, a fix to one clumsy sentence in the docs — all of it is contribution. The project is GPL-3.0, so submitting means you're fine with shipping under the same licence.
+
+Before you start, these are worth reading:
+
+| Doc | Read it when |
+| --- | --- |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Before your first PR. Branch names, commit conventions, quality gates, code conventions — all of it is in there |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Argue hard about the code, never about the person. The specifics live here |
+| [.github/pull_request_template.md](.github/pull_request_template.md) | Comes up automatically when you open a PR; just tick the boxes |
+| [.github/ISSUE_TEMPLATE/bug_report.yml](.github/ISSUE_TEMPLATE/bug_report.yml) | Bug reports will ask for `nuitka-rs.log` plus your Python and compiler versions |
+
+Run the quality gates at least once before you open that PR:
+
+```bash
+cd nuitka-rs
+cargo build && cargo test --lib
+```
+
+Docs-only changes are fine too. This repo is Chinese-first with `.Eng.md` siblings (`README.Eng.md`, `docs/CONTRIBUTING.Eng.md`) — change one, change the other.

@@ -1,0 +1,135 @@
+name: Bug 报告
+description: 打包失败、环境准备失败、界面异常、编译器识别不到
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        填之前先看一眼 README 的「已知限制」，那里列的几件事不用再报。
+
+        最有用的一条材料是程序目录下的 `nuitka-rs.log` —— 和 `nuitka-rs.exe` 放在同一个文件夹里。把出错前后那几十行贴上来，比写十句描述管用。
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 一句话说清症状。是打包报错、环境准备失败，还是界面没反应？
+      placeholder: 点「配置 C++ 编译环境」后，程序报「安装器退出码 -1978335226」，安装压根没开始
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从打开程序开始，按顺序写。能稳定复现的话说明一下频率。
+      placeholder: |
+        1. 打开程序，点「立即准备环境」
+        2. 选 Python 3.13
+        3. 点左下角「配置 C++ 编译环境」
+        4. 报错
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 你期望的结果
+      placeholder: 应该弹出 UAC 然后开始下载安装
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 系统
+      options:
+        - Windows 11
+        - Windows 10
+        - 其它（请在下面补一句）
+    validations:
+      required: true
+
+  - type: input
+    id: os-build
+    attributes:
+      label: 系统版本号
+      description: 设置 → 系统 → 系统信息 里的「版本」，或者 `winver` 弹出来的那串
+      placeholder: 22631
+    validations:
+      required: false
+
+  - type: dropdown
+    id: python
+    attributes:
+      label: Python 版本
+      options:
+        - 3.14
+        - 3.13
+        - 3.12
+        - 3.11
+        - 3.10 或更低
+        - 本机没有 Python（用程序下的便携版）
+        - 不确定
+    validations:
+      required: true
+
+  - type: input
+    id: python-path
+    attributes:
+      label: Python 路径
+      description: 设置页「当前生效」那一行，或者 `where python` 的输出
+      placeholder: C:\Users\xxx\AppData\Local\Nuitka++\python\3.13\python.exe
+    validations:
+      required: false
+
+  - type: dropdown
+    id: compiler
+    attributes:
+      label: C 编译器
+      options:
+        - MSVC（Visual Studio / Build Tools）
+        - winlibs gcc（程序下载的或 Nuitka 缓存的）
+        - 都没有
+        - 不确定
+    validations:
+      required: true
+
+  - type: input
+    id: compiler-version
+    attributes:
+      label: 编译器版本
+      description: MSVC 填工具集号（如 14.44.35207），winlibs 填 gcc 版本（如 15.2.0）
+      placeholder: 14.44.35207
+    validations:
+      required: false
+
+  - type: input
+    id: nuitka
+    attributes:
+      label: Nuitka 版本
+      description: 主界面环境状态那一行，或 `python -m nuitka --version`
+      placeholder: 4.3.5
+    validations:
+      required: false
+
+  - type: textarea
+    id: log
+    attributes:
+      label: nuitka-rs.log
+      description: 出错前后的那几十行。太长的话可以把文件直接拖进来当附件。
+      render: text
+      placeholder: |
+        [1794707256] INFO  开始安装 MSVC：官方安装器 · runas 提权
+        [1794707482] INFO  MSVC 安装器退出码：-1978335226
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图（可选）
+      description: 界面报错、弹窗、安装器窗口，都可以直接拖进来
+    validations:
+      required: false

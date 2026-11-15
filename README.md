@@ -97,6 +97,8 @@ nuitka-rs/
 | [scannuitka.md](nuitka-rs/src/nuitka/scannuitka/scannuitka.md) | Nuitka 探测与版本矩阵 |
 | [scanmsvc.md](nuitka-rs/src/nuitka/scanmsvc/scanmsvc.md) | MSVC 探测与版本要求 |
 | [scangcc.md](nuitka-rs/src/nuitka/scangcc/scangcc.md) | gcc / winlibs 探测与 PATH 冲突判定 |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | 贡献指南：分支命名、提交规范、质量门、代码约定 |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 行为准则 |
 
 ## 一些实现上的取舍
 
@@ -110,3 +112,25 @@ nuitka-rs/
 - 单目录模式（`--standalone`）走的是同一条执行路径，但没做过端到端验证
 - VS 版本比 Nuitka 已知列表还新时可能识别失败，可用环境变量 `NUITKA_RS_MSVC=14.50` 钉死版本
 - 界面暂无深色/浅色切换，只有浅色（以后会做吧）
+
+## 参与贡献
+
+欢迎 PR。不是只有代码才算：一个能复现的 Issue、一段日志、一张界面截图、一句文档表述的纠正，都是贡献。仓库采用 GPL-3.0，提交即视为同意以同一协议发布。
+
+动手之前，这几份建议先看一遍：
+
+| 文档 | 什么时候看 |
+| --- | --- |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | 第一次提 PR 前。分支命名、提交规范、质量门、代码约定全在里面 |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 技术可以吵，人不能踩。这条线的具体写法在这里 |
+| [.github/pull_request_template.md](.github/pull_request_template.md) | 提 PR 时自动带出来，Checklist 逐条打勾 |
+| [.github/ISSUE_TEMPLATE/bug_report.yml](.github/ISSUE_TEMPLATE/bug_report.yml) | 报 Bug 时会问你要 `nuitka-rs.log`，以及 Python / 编译器版本 |
+
+提 PR 前至少跑一遍质量门：
+
+```bash
+cd nuitka-rs
+cargo build && cargo test --lib
+```
+
+只想改文档也行。这个仓库是中文为主、英文同名加 `.Eng.md`（`README.Eng.md`、`docs/CONTRIBUTING.Eng.md`），改一份记得同步另一份。
