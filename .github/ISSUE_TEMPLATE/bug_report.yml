@@ -56,7 +56,7 @@ body:
     attributes:
       label: 系统版本号
       description: 设置 → 系统 → 系统信息 里的「版本」，或者 `winver` 弹出来的那串
-      placeholder: 22631
+      placeholder: "22631"
     validations:
       required: false
 
@@ -131,5 +131,6 @@ body:
     attributes:
       label: 截图（可选）
       description: 界面报错、弹窗、安装器窗口，都可以直接拖进来
+      placeholder: 直接把截图拖到这个框里，或者粘贴图片
     validations:
       required: false
