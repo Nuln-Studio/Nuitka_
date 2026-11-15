@@ -108,7 +108,7 @@ See [项目结构.md](项目结构.md) for the full directory tree and design co
 
 ## Known limitations
 
-- Standalone mode (`--standalone`) follows the same execution path but has not been verified end-to-end
+- After MSVC finishes installing, the app (sometimes the whole system) has to be restarted before the new toolset gets picked up — there's no automatic re-check
 - If your VS version is newer than Nuitka's known list, detection may fail; pin the version with the `NUITKA_RS_MSVC=14.50` environment variable
 - No dark/light theme toggle yet — light only (maybe someday)
 
