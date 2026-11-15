@@ -1,14 +1,42 @@
 # Nuitka++
 
-把 Python 脚本打成 Windows 可执行文件的桌面工具。内核是 [Nuitka](https://nuitka.net/)，外壳是 Tauri 2 + Rust。
+**Read in English**:
+[English](README.md)
 
-不用记参数：选脚本、选输出目录、点开始打包。
+
+<!-- 技术栈 -->
+[![Rust](https://img.shields.io/badge/Rust-1.75+-orange.svg?logo=rust&style=flat-square&labelColor=555)](https://www.rust-lang.org/)
+[![Tauri](https://img.shields.io/badge/Tauri-2.0-24C8DB.svg?logo=tauri&style=flat-square&labelColor=555)](https://tauri.app/)
+[![Nuitka](https://img.shields.io/badge/Nuitka-4.3.5+-F5A623.svg?style=flat-square&labelColor=555)](https://nuitka.net/)
+
+<!-- 目标环境 -->
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6.svg?logo=windows&style=flat-square&labelColor=555)](https://www.microsoft.com/windows)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB.svg?logo=python&style=flat-square&labelColor=555)](https://www.python.org/)
+[![Compiler](https://img.shields.io/badge/Compiler-MSVC%20%7C%20MinGW-5C2D91.svg?style=flat-square&labelColor=555)](https://nuitka.net/)
+[![WebView2](https://img.shields.io/badge/Runtime-WebView2-24C8DB.svg?logo=microsoftedge&style=flat-square&labelColor=555)](https://developer.microsoft.com/microsoft-edge/webview2/)
+
+<!-- 项目信息 -->
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square&labelColor=555)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square&labelColor=555)](https://github.com/Nuln-Studio/Nuitka_/pulls)
+***
+**从零构建PythonEXE程序，即使你没有Python，即使你没装nuitka，即使你没有适合的C编译器，都可以用Nuitka++来一键解决！**
+
+`软件下载完成后，如果你的环境不完整，点击准备环境或立刻准备环境，随后按需选择Python版本或C编译器种类(3.12以上只能用MSVC)，确认即可开始自动帮您配置环境`
+| 你的环境还不错 | 你的环境不咋地 |
+| -- | -- |
+| ![不错](docs/screenshots/haibucuo.png) | ![不咋地](docs/screenshots/buzadi.png) |
+***
+
+
+内核是 [Nuitka](https://nuitka.net/)，外壳是 Tauri 2 + Rust
+
+不用记参数：选脚本、选输出目录、点开始打包(后续做模块化参数块)
 
 ![配置页](docs/screenshots/config.png)
 
 ## 能做什么
 
-- **环境自检**：找 Python / Nuitka / MSVC / winlibs gcc，缺什么补什么（下载便携 Python、清华镜像装 Nuitka、触发 winlibs 下载）
+- **环境自检**：找 Python / Nuitka / MSVC / winlibs gcc，缺什么补什么（下载便携 Python、镜像源装 Nuitka、触发 winlibs 下载或者无人值守安装MSVC）
 - **真编译验证**：准备完会真编一个 hello 程序并运行它，跑通才算「优秀」，只看版本号最多算「待验证」
 - **一键打包**：单文件 exe 或单目录，支持程序图标、控制台窗口开关、附加参数
 - **只给进度，不刷日志**：打包时是进度环 + 阶段文字，出错弹窗给原因；完整输出在程序目录的 `nuitka-rs.log`
@@ -26,9 +54,9 @@
 | 项 | 要求 |
 | --- | --- |
 | 系统 | Windows 10 / 11 x64 |
-| Python | 3.8 及以上，推荐 3.11 及以上（也可用工具自带的便携版 3.12） |
-| 编译器 | MSVC 或 Nuitka 自带的 winlibs，二选一 |
-| 运行时 | WebView2 Runtime（Windows 11 自带） |
+| Python | 3.8 及以上，推荐 3.11 及以上(程序可装) |
+| 编译器 | MSVC 或 Nuitka 自带的 winlibs，二选一(程序可装) |
+| 运行时 | WebView2 Runtime(Win10/Win11 自带) |
 
 ## 构建
 
@@ -81,4 +109,4 @@ nuitka-rs/
 
 - 单目录模式（`--standalone`）走的是同一条执行路径，但没做过端到端验证
 - VS 版本比 Nuitka 已知列表还新时可能识别失败，可用环境变量 `NUITKA_RS_MSVC=14.50` 钉死版本
-- 界面暂无深色/浅色切换，只有深色
+- 界面暂无深色/浅色切换，只有浅色（以后会做吧）
