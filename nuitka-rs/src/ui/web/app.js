@@ -26,10 +26,11 @@
     extra: '',
     pythonChoice: '3.12',
     pythonCanPrepare: true,
-    // 设置页里固定过的 Python 小版本；空表示按规则自动挑
-    pinnedPython: '',
-    // '' = 自动挑编译器
-    compilerChoice: '',
+    // 有版本因本机缺 MSVC 被隐藏时，弹窗里要给「配置 C++ 编译环境」入口
+    msvcMissing: false,
+    // 设置里填的绝对路径；空表示自动挑
+    pythonSetting: '',
+    compilerSetting: '',
     autoSave: true,
     settingsPath: '',
     formPath: ''
@@ -392,6 +393,7 @@
 
     state.pythonCanPrepare = choice.can_prepare !== false;
     $('pythonConfirm').disabled = !state.pythonCanPrepare;
+    $('msvcInstall').classList.toggle('hidden', !state.msvcMissing);
     warning.textContent = choice.warning || '';
     warning.classList.toggle('hidden', !choice.warning);
     warning.classList.toggle('bad', !state.pythonCanPrepare);
@@ -422,8 +424,11 @@
 
       const meta = document.createElement('span');
       meta.className = 'python-option-meta' + (choice.warning ? ' warn' : '');
-      meta.textContent = (choice.nuitka || 'Nuitka') + ' · ' + (choice.compiler || '编译器待检测');
-      meta.title = choice.warning || '';
+      const origin = choice.local
+        ? (choice.local_ready ? '本机已有' : '本机已有·缺 Nuitka')
+        : '需下载';
+      meta.textContent = origin + ' · ' + (choice.nuitka || 'Nuitka') + ' · ' + (choice.compiler || '编译器待检测');
+      meta.title = choice.warning || choice.local || '';
 
       main.appendChild(title);
       main.appendChild(meta);
@@ -448,6 +453,7 @@
     try {
       const data = await bridge.invoke('python_options');
       pythonChoices = data.versions || [];
+      state.msvcMissing = !!data.msvc_missing;
       const selected = data.selected || state.pythonChoice;
       if (pythonChoices.some(function (item) { return item.version === selected; })) {
         state.pythonChoice = selected;
@@ -506,8 +512,11 @@
     if (!pythonChoices.length) await loadPythonChoices();
     const picked = await choosePython();
     if (!picked) return;
-    const python = state.pythonChoice || '3.12';
+    await startPrepare(state.pythonChoice || '3.12');
+  }
 
+  /* 版本选好之后的部分：目录 → 下载确认 → 真正准备。装完编译器也直接从这段续上 */
+  async function startPrepare(python) {
     let base = null;
     try {
       base = await bridge.invoke('pick_dir', { title: '选择环境安装目录' });
@@ -557,6 +566,49 @@
       $('prepare').disabled = false;
       $('primary').textContent = '重新准备';
       mode = 'prepare';
+    }
+  }
+
+  /* 装 MSVC 生成工具：无人值守安装，UAC 与许可交给系统安装器，程序只管起进程和重扫 */
+  async function configureMsvc() {
+    const confirmed = await confirmPrompt(
+      '需要配置 C++ 编译环境',
+      '将从微软官方安装 C++ 生成工具：约 2–3 GB 下载、5–15 分钟、需要管理员权限。' +
+        '安装时系统会弹一次权限确认，请点「是」；许可条款由安装器自己显示。',
+      '开始配置',
+      '取消'
+    );
+    if (!confirmed) return;
+
+    finishPython(false);
+    $('msvcInstall').disabled = true;
+    setBusy('正在配置编译环境，请勿关闭窗口…');
+    startPreparePanel();
+
+    try {
+      const wanted = state.pythonChoice || '3.13';
+      const message = await bridge.invoke('install_msvc', { python: wanted });
+      addPrepareLog(message);
+      finishPreparePanel();
+      $('lead').textContent = message;
+      await loadPythonChoices();
+      await loadEnv();
+      // 装完把用户本来要用的版本选回来，选好就能接着准备，不用再点一次按钮
+      if (pythonChoices.some(function (item) { return item.version === wanted; })) {
+        state.pythonChoice = wanted;
+        paintPythonChoice();
+      }
+      const picked = await choosePython();
+      if (picked) await startPrepare(state.pythonChoice || wanted);
+    } catch (error) {
+      const reason = typeof error === 'string'
+        ? error
+        : (error && error.message) || '未知错误';
+      failPreparePanel(reason);
+      $('lead').textContent = '配置编译环境失败：'
+        + (reason.length > 64 ? reason.slice(0, 64) + '…' : reason);
+    } finally {
+      $('msvcInstall').disabled = false;
     }
   }
 
@@ -924,11 +976,10 @@
       const config = await bridge.invoke('read_config');
       const settings = config.settings || {};
       state.autoSave = settings.auto_save_last !== false;
-      state.pinnedPython = settings.python_version || '';
-      state.compilerChoice = settings.compiler || '';
+      state.pythonSetting = settings.python || '';
+      state.compilerSetting = settings.compiler || '';
       state.settingsPath = config.settings_path || '';
       state.formPath = config.form_path || '';
-      if (state.pinnedPython) state.pythonChoice = state.pinnedPython;
       // 关掉自动保存就不碰表单，用户是想从空白开始
       if (state.autoSave && config.form) applyForm(config.form);
       paintSettings();
@@ -943,8 +994,8 @@
       await bridge.invoke('write_settings', {
         payload: {
           auto_save_last: state.autoSave,
-          python_version: state.pinnedPython,
-          compiler: state.compilerChoice || ''
+          python: state.pythonSetting || '',
+          compiler: state.compilerSetting || ''
         }
       });
     } catch (error) {
@@ -960,11 +1011,19 @@
   }
 
   function paintSettings() {
-    $('settingsPython').textContent = (state.python || '—')
-      + (state.pinnedPython ? ' · 已固定' : ' · 自动');
-    $('settingsPythonPath').textContent = state.pythonPath || '';
-    $('settingsCompiler').textContent = compilerLabel(state.compiler);
-    paintSegment('compilerSeg', state.compilerChoice || 'auto');
+    // 正在输入的框别被刷新覆盖，光标跳走很难受
+    if (document.activeElement !== $('pythonInput')) {
+      $('pythonInput').value = state.pythonSetting || '';
+    }
+    if (document.activeElement !== $('compilerInput')) {
+      $('compilerInput').value = state.compilerSetting || '';
+    }
+    $('settingsPython').textContent = state.python
+      ? '当前生效  ' + state.python + (state.pythonPath ? '  ' + state.pythonPath : '')
+      : '当前没有找到可用的 Python';
+    $('settingsCompiler').textContent = state.compiler
+      ? '当前生效  ' + compilerLabel(state.compiler)
+      : (state.compilerSetting ? '这个路径下没有可用工具链' : '当前没有找到可用的编译器');
     $('optAutoSave').checked = state.autoSave;
     $('settingsFiles').textContent = state.settingsPath ? '软件设置  ' + state.settingsPath : '';
     $('settingsFormPath').textContent = state.formPath ? '上次配置  ' + state.formPath : '';
@@ -1292,25 +1351,41 @@
     showPage(settingsFrom);
   });
 
-  $('changePython').addEventListener('click', async function () {
-    if (building) return;
-    const picked = await choosePython();
-    if (!picked) return;
-    state.pinnedPython = state.pythonChoice;
+  // 改完路径就写盘并重新检测：状态条和打包用的都是这一份选择
+  async function applyToolchainSetting() {
     await persistSettings();
     await loadEnv();
     paintSettings();
-    $('settingsStatus').textContent = '已固定使用 Python ' + state.pinnedPython + '。';
+  }
+
+  $('browsePython').addEventListener('click', async function () {
+    if (!bridge || building) return;
+    const picked = await bridge.invoke('pick_python', { title: '选择 Python 解释器' });
+    if (!picked) return;
+    state.pythonSetting = picked;
+    $('pythonInput').value = picked;
+    await applyToolchainSetting();
   });
 
-  $('compilerSeg').addEventListener('click', async function (event) {
-    const button = event.target.closest('button');
-    if (!button || building) return;
-    state.compilerChoice = button.dataset.value === 'auto' ? '' : button.dataset.value;
-    paintSegment('compilerSeg', button.dataset.value);
-    await persistSettings();
-    await loadEnv();
-    paintSettings();
+  $('pythonInput').addEventListener('change', async function (event) {
+    if (building) return;
+    state.pythonSetting = event.target.value.trim();
+    await applyToolchainSetting();
+  });
+
+  $('browseCompiler').addEventListener('click', async function () {
+    if (!bridge || building) return;
+    const picked = await bridge.invoke('pick_dir', { title: '选择编译器目录' });
+    if (!picked) return;
+    state.compilerSetting = picked;
+    $('compilerInput').value = picked;
+    await applyToolchainSetting();
+  });
+
+  $('compilerInput').addEventListener('change', async function (event) {
+    if (building) return;
+    state.compilerSetting = event.target.value.trim();
+    await applyToolchainSetting();
   });
 
   $('optAutoSave').addEventListener('change', function (event) {
@@ -1325,8 +1400,8 @@
     try {
       const path = await bridge.invoke('export_config', {
         form: formOf(),
-        python: state.pinnedPython,
-        compiler: state.compilerChoice || ''
+        python: state.pythonSetting || '',
+        compiler: state.compilerSetting || ''
       });
       if (path) {
         $('settingsStatus').textContent = '已导出：' + path;
@@ -1351,11 +1426,8 @@
         return;
       }
       applyForm(imported.form);
-      if (imported.python_version) {
-        state.pinnedPython = imported.python_version;
-        state.pythonChoice = imported.python_version;
-      }
-      state.compilerChoice = imported.compiler || '';
+      state.pythonSetting = imported.python || '';
+      state.compilerSetting = imported.compiler || '';
       await persistSettings();
       await loadEnv();
       paintSettings();
@@ -1442,6 +1514,7 @@
     finishPython(true);
   });
   $('pythonCancel').addEventListener('click', function () { finishPython(false); });
+  $('msvcInstall').addEventListener('click', configureMsvc);
   $('pythonLayer').addEventListener('click', function (event) {
     if (event.target === $('pythonLayer')) finishPython(false);
   });

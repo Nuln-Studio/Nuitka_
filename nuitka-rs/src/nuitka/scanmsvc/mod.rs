@@ -101,6 +101,16 @@ impl Msvc {
         self.toolset >= required(python)
     }
 
+    /// 手填的路径是不是指向这套工具链：VS 安装根、工具集目录、cl.exe 都认。
+    pub fn matches_path(&self, wanted: &Path) -> bool {
+        let wanted = identity(wanted);
+        if wanted == identity(Path::new(&self.install)) {
+            return true;
+        }
+        let binary = identity(&self.path);
+        wanted == binary || binary.starts_with(&wanted)
+    }
+
     pub fn status(&self, python: PyVersion) -> Status {
         if !self.supports(python) {
             return Status::TooOld;
@@ -119,6 +129,11 @@ impl fmt::Display for Msvc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "MSVC {} ({}, {})", self.toolset, self.install, self.host)
     }
+}
+
+/// 比较路径前先归一化：大小写、短路径、软链接都算同一条路。
+fn identity(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 pub fn required(python: PyVersion) -> Toolset {

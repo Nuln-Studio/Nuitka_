@@ -344,7 +344,14 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
         return Err("已经有一个打包任务在跑".to_string());
     }
 
-    let tool = python_version(&python).and_then(toolchain::resolve);
+    let version = python_version(&python);
+    // 3.13 起 --mingw64 会被 Nuitka 直接拒绝，别等编译到一半才炸
+    if request.compiler == "gcc" && !version.map(toolchain::mingw_ok).unwrap_or(true) {
+        return Err(
+            "Python 3.13 起不能用 winlibs gcc（Nuitka 不支持 --mingw64），请改用 MSVC".to_string(),
+        );
+    }
+    let tool = version.and_then(toolchain::resolve);
     if let Some(tool) = &tool {
         on_line(&format!("[环境] 使用编译器：{}", tool.describe()));
     }
@@ -365,6 +372,7 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
     // MSVC 认不出来时（新版本 VS 很常见），退到 Nuitka 自带的 winlibs 再试一次
     if !ok
         && request.compiler.starts_with("msvc")
+        && version.map(toolchain::mingw_ok).unwrap_or(true)
         && let Some(gcc) = toolchain::fallback_gcc()
     {
         on_line("[重试] MSVC 后端失败，改用 winlibs gcc 重新编译");

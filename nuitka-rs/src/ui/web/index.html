@@ -318,23 +318,22 @@
               </header>
 
               <div class="field">
-                <span class="label">目标 Python</span>
+                <span class="label">Python 解释器</span>
                 <div class="control">
                   <div class="control-row">
-                    <button class="btn secondary small" id="changePython">更换版本</button>
-                    <span class="value" id="settingsPython">—</span>
+                    <input class="input grow-input" id="pythonInput" placeholder="留空自动选择，例如 C:\Python312\python.exe" spellcheck="false">
+                    <button class="btn secondary small" id="browsePython">浏览</button>
                   </div>
-                  <p class="path" id="settingsPythonPath"></p>
+                  <p class="path" id="settingsPython"></p>
                 </div>
               </div>
 
               <div class="field">
-                <span class="label">编译器</span>
+                <span class="label">C 编译器</span>
                 <div class="control">
-                  <div class="seg" id="compilerSeg">
-                    <button data-value="auto" class="on">自动</button>
-                    <button data-value="msvc">MSVC</button>
-                    <button data-value="gcc">winlibs gcc</button>
+                  <div class="control-row">
+                    <input class="input grow-input" id="compilerInput" placeholder="留空自动选择：VS 安装根目录或 winlibs 目录" spellcheck="false">
+                    <button class="btn secondary small" id="browseCompiler">浏览</button>
                   </div>
                   <p class="path" id="settingsCompiler"></p>
                 </div>
@@ -392,11 +391,12 @@
 <div class="modal-layer hidden" id="pythonLayer">
   <div class="modal python-modal" role="dialog" aria-modal="true" aria-labelledby="pythonModalTitle">
     <h3 id="pythonModalTitle">选择目标 Python</h3>
-    <p class="python-modal-lead">Nuitka 和编译器会按所选版本自动匹配；不满足时会在这里提示。</p>
+    <p class="python-modal-lead">Python 一律可以下载安装；编译器会按所选版本匹配，缺了就在这里提示，并给出补装入口。</p>
     <div class="python-options" id="pythonOptions" role="radiogroup" aria-label="目标 Python"></div>
     <p class="python-modal-warning hidden" id="pythonModalWarning"></p>
     <p class="modal-note">该版本会用于本次准备、环境检测和之后的打包。</p>
     <div class="modal-actions">
+      <button class="btn secondary hidden" id="msvcInstall">配置 C++ 编译环境</button>
       <button class="btn secondary" id="pythonCancel">取消</button>
       <button class="btn primary" id="pythonConfirm">用这个版本</button>
     </div>

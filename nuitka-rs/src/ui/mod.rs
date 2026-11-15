@@ -38,16 +38,17 @@ fn pick_icon(window: tauri::WebviewWindow, title: String) -> Option<String> {
 }
 
 #[tauri::command]
+fn pick_python(window: tauri::WebviewWindow, title: String) -> Option<String> {
+    nuitka::dialog::pick_file(hwnd_of(&window), &title, "可执行文件", "*.exe")
+}
+
+#[tauri::command]
 fn read_config() -> Loaded {
     config::load()
 }
 
 #[tauri::command]
 fn write_settings(payload: Settings) -> Result<(), String> {
-    // 版本同时写回 paths，让「准备环境」和自动挑解释器认同同一个选择
-    if !payload.python_version.trim().is_empty() {
-        nuitka::paths::set_python(payload.python_version.trim())?;
-    }
     config::save_settings(&payload)
 }
 
@@ -173,11 +174,37 @@ async fn prepare_env(app: AppHandle, base: String, python: String) -> Result<Env
     }
 }
 
+/// 装 MSVC 生成工具：无人值守安装，UAC 与许可由系统安装器自己处理。
+#[tauri::command]
+async fn install_msvc(app: AppHandle, python: String) -> Result<String, String> {
+    let handle = app.clone();
+    let version = nuitka::bootstrap::parse_python_line(&python)
+        .unwrap_or(nuitka::python_discovery::PyVersion::new(3, 13, 0));
+    let cache = nuitka::paths::private_root()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("cache");
+    tauri::async_runtime::spawn_blocking(move || {
+        nuitka::msvc_install::install(&cache, version, |event| {
+            let _ = handle.emit("env-progress", event);
+        })
+        .map(|outcome| {
+            if outcome.need_reboot {
+                "安装完成，重启程序后生效。".to_string()
+            } else if outcome.toolset.is_empty() {
+                "安装完成，但还没扫到工具链，重启程序后重试。".to_string()
+            } else {
+                format!("安装完成，工具集 {}（{}）", outcome.toolset, outcome.method)
+            }
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 fn preview_command(request: build::Request) -> String {
     build::command_line(&request)
 }
-
 /// 单文件打包前先问一句：这个 Python 里有没有 zstandard。
 #[tauri::command]
 async fn compression_ready(python: String) -> Result<bool, String> {
@@ -284,6 +311,7 @@ pub fn run() {
             pick_dir,
             pick_script,
             pick_icon,
+            pick_python,
             read_config,
             write_settings,
             write_form,
@@ -300,6 +328,7 @@ pub fn run() {
             python_options,
             plan_env,
             prepare_env,
+            install_msvc,
             enter_main
         ])
         .run(tauri::generate_context!())

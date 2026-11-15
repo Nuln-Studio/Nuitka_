@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::python_discovery::PyVersion;
-use super::{log, scangcc, scanmsvc};
+use super::{log, scangcc, scanmsvc, settings};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
@@ -50,17 +50,61 @@ impl Toolchain {
     }
 }
 
+/// Nuitka 在 Python 3.13 起不再接受 --mingw64（新 ABI 只走 MSVC），winlibs 一律不算数。
+pub(crate) fn mingw_ok(python: PyVersion) -> bool {
+    python < PyVersion::new(3, 13, 0)
+}
+
 /// 找一套“真的能用”的编译器：优先 MSVC（补上 VC 环境），退化到 Nuitka 的 winlibs。
 pub(crate) fn resolve(python: PyVersion) -> Option<Toolchain> {
-    resolve_msvc(python).or_else(resolve_gcc)
+    // 设置里给了编译器路径就只走它；对不上再退回自动挑，但把原因记进日志
+    if let Some(wanted) = settings::compiler_path() {
+        if let Some(tool) = resolve_at(python, &wanted) {
+            return Some(tool);
+        }
+        log::error(&format!(
+            "设置里的编译器路径对不上可用工具链：{}",
+            wanted.display()
+        ));
+    }
+    resolve_msvc(python).or_else(|| if mingw_ok(python) { resolve_gcc() } else { None })
+}
+
+fn resolve_at(python: PyVersion, wanted: &Path) -> Option<Toolchain> {
+    let msvcs = scanmsvc::scan();
+    if let Some(item) = msvcs
+        .iter()
+        .find(|item| item.matches_path(wanted) && item.status(python).is_usable())
+    {
+        return msvc_toolchain(item);
+    }
+    if !mingw_ok(python) {
+        return None;
+    }
+    let gccs = scangcc::scan();
+    gccs.iter()
+        .find(|item| item.matches_path(wanted) && item.status().is_usable())
+        .and_then(gcc_toolchain)
 }
 
 fn resolve_msvc(python: PyVersion) -> Option<Toolchain> {
     let items = scanmsvc::scan();
     let msvc = scanmsvc::best(&items, python)?;
+    msvc_toolchain(msvc)
+}
+
+fn msvc_toolchain(msvc: &scanmsvc::Msvc) -> Option<Toolchain> {
     let label = format!("MSVC {}", msvc.toolset);
 
+    // 先按这套工具链自己的安装根补环境，再兜底试其它根
+    let mut roots = vec![PathBuf::from(&msvc.install)];
     for root in scanmsvc::roots() {
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+
+    for root in roots {
         let vcvars = root
             .join("VC")
             .join("Auxiliary")
@@ -114,6 +158,10 @@ fn resolve_msvc(python: PyVersion) -> Option<Toolchain> {
 fn resolve_gcc() -> Option<Toolchain> {
     let items = scangcc::scan();
     let gcc = scangcc::best(&items)?;
+    gcc_toolchain(gcc)
+}
+
+fn gcc_toolchain(gcc: &scangcc::Gcc) -> Option<Toolchain> {
     let bin = gcc.path.parent()?.to_path_buf();
     let label = format!("gcc {}", gcc.version);
     log::info(&format!(

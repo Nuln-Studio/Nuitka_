@@ -59,6 +59,13 @@ impl Gcc {
         self.source == Source::NuitkaCache
     }
 
+    /// 手填的路径是不是指向这个 gcc：目录（winlibs 根 / bin）或 gcc.exe 本身都认。
+    pub fn matches_path(&self, wanted: &Path) -> bool {
+        let wanted = identity(wanted);
+        let binary = identity(&self.path);
+        wanted == binary || binary.starts_with(&wanted)
+    }
+
     pub fn status(&self) -> Status {
         match self.source {
             Source::NuitkaCache if self.shadowed => Status::Shadowed,
@@ -73,6 +80,11 @@ impl fmt::Display for Gcc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "gcc {} ({})", self.version, self.source.tag())
     }
+}
+
+/// 比较路径前先归一化：大小写、短路径、软链接都算同一条路。
+fn identity(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 pub fn best(items: &[Gcc]) -> Option<&Gcc> {

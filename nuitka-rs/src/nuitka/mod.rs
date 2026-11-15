@@ -7,6 +7,7 @@ pub(crate) mod fetch;
 pub(crate) mod instance;
 pub(crate) mod lock;
 pub(crate) mod log;
+pub(crate) mod msvc_install;
 pub(crate) mod paths;
 pub(crate) mod python_discovery;
 pub(crate) mod scangcc;
@@ -74,14 +75,30 @@ pub(crate) fn status() -> EnvStatus {
 
     let msvcs = scanmsvc::scan();
     let gccs = scangcc::scan();
-    let auto_msvc = python_version.and_then(|version| scanmsvc::best(&msvcs, version));
-    let auto_gcc = scangcc::best(&gccs);
-    // 设置页里指定过编译器就照用户的来；找不到就如实显示「缺编译器」，不偷偷换一个
-    let preference = settings::read_settings().compiler;
-    let (msvc, gcc) = match preference.trim() {
-        "gcc" => (None, auto_gcc),
-        "" => (auto_msvc, auto_gcc),
-        _ => (auto_msvc, None),
+    // 编译器检测不能依赖「有没有 Python」：还没 Python 时也要如实报出已装的 MSVC，
+    // 否则刚装完 MSVC 的用户会看到「未找到可用的编译器」，白装一次
+    let probe = python_version.unwrap_or(python_discovery::PyVersion::new(3, 12, 0));
+    let auto_msvc = scanmsvc::best(&msvcs, probe);
+    // 3.13 起 Nuitka 不收 --mingw64，gcc 一律不参与挑选
+    let auto_gcc = python_version
+        .filter(|version| toolchain::mingw_ok(*version))
+        .and_then(|_| scangcc::best(&gccs));
+    // 设置里填了路径就只在那套工具链里挑；对不上就如实显示「缺编译器」，不偷偷换一个
+    let wanted = settings::compiler_path();
+    let mingw = python_version.map(toolchain::mingw_ok).unwrap_or(true);
+    let (msvc, gcc) = match wanted.as_deref() {
+        Some(path) => (
+            msvcs
+                .iter()
+                .find(|item| item.matches_path(path) && item.status(probe).is_usable()),
+            if mingw {
+                gccs.iter()
+                    .find(|item| item.matches_path(path) && item.status().is_usable())
+            } else {
+                None
+            },
+        ),
+        None => (auto_msvc, auto_gcc),
     };
     let compiler_text = msvc
         .map(|item| format!("MSVC {}", item.toolset))
@@ -114,11 +131,15 @@ pub(crate) fn status() -> EnvStatus {
             (true, "待验证", hint)
         }
     } else if has_python && has_nuitka {
-        (
-            false,
-            "待完善",
-            "还差一个可用的编译器，建议先准备环境。".to_string(),
-        )
+        let hint = if wanted.is_some() {
+            "设置里选的编译器路径没有对应的可用工具链，回设置里重选一个。".to_string()
+        } else if !mingw {
+            "这个 Python 版本只能用 MSVC，本机没有可用的 MSVC，换 3.12 可以直接跑。"
+                .to_string()
+        } else {
+            "还差一个可用的编译器，建议先准备环境。".to_string()
+        };
+        (false, "待完善", hint)
     } else {
         (
             false,

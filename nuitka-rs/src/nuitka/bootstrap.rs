@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::nuitka::python_discovery::PyVersion;
+use crate::nuitka::python_discovery::{self, PyVersion};
 use crate::nuitka::{fetch, lock, log, paths, scannuitka, selfcheck, toolchain};
 
 pub(crate) const PYTHON_CHOICES: &[(&str, &str, bool)] = &[
@@ -46,23 +46,39 @@ pub(crate) struct PythonChoice {
     pub compiler: String,
     pub warning: String,
     pub can_prepare: bool,
+    /// 本机已有这一版的解释器（绝对路径，空表示没有）
+    pub local: String,
+    /// 本机那份里面已经有能用的 Nuitka，准备时可以直接复用
+    pub local_ready: bool,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct PythonOptions {
     pub selected: String,
     pub versions: Vec<PythonChoice>,
+    /// 有版本因为本机没有 MSVC 被过滤掉了：界面据此给出「配置编译环境」入口
+    pub msvc_missing: bool,
 }
 
 pub(crate) fn python_options() -> PythonOptions {
     let msvcs = crate::nuitka::scanmsvc::scan();
     let gccs = crate::nuitka::scangcc::scan();
+    // 本机已有的解释器只扫一次，四条版本行共用结果
+    let locals = python_discovery::scan(&python_discovery::Policy {
+        minimum: PyVersion::new(0, 0, 0),
+        allow_prerelease: true,
+    });
     let versions = PYTHON_CHOICES
         .iter()
-        .map(|(line, label, recommended)| {
+        .map(|(line, label, _)| {
             let version = parse_python_line(line).unwrap_or(PyVersion::new(3, 12, 0));
+            let mingw = crate::nuitka::toolchain::mingw_ok(version);
             let msvc = crate::nuitka::scanmsvc::best(&msvcs, version);
-            let gcc = crate::nuitka::scangcc::best(&gccs);
+            let gcc = if mingw {
+                crate::nuitka::scangcc::best(&gccs)
+            } else {
+                None
+            };
             let (compiler, warning) = if let Some(item) = msvc {
                 (format!("MSVC {}", item.toolset), String::new())
             } else if let Some(item) = gcc {
@@ -71,29 +87,105 @@ pub(crate) fn python_options() -> PythonOptions {
                     "本机 MSVC 不满足该 Python，准备时使用 Nuitka 自带的 winlibs。"
                         .to_string(),
                 )
+            } else if !mingw {
+                // 3.13 起只认 MSVC：本机没有就把「怎么办」直接给出来，不引导用户去装 VS
+                (
+                    "MSVC（本机没有）".to_string(),
+                    "这个版本只能配 MSVC。点左下角的「配置 C++ 编译环境」装好就能用；急用可以选 3.12，它不需要 MSVC。"
+                        .to_string(),
+                )
             } else {
                 (
                     "winlibs（准备时下载）".to_string(),
-                    "本机没有匹配的 MSVC/GCC，准备时下载 winlibs 编译器。".to_string(),
+                    "本机没有匹配的 MSVC/GCC，准备时自动下载 winlibs 编译器（3.12 及以下推荐这条路线）。"
+                        .to_string(),
                 )
             };
+            // 3.12 及以下即使本机没有 gcc，也能现场下 winlibs，所以一样算「能准备」
+            let can_prepare = msvc.is_some() || mingw;
+            let local = local_python(&locals, version);
+            let mut warning = warning;
+            // 本机有这一版、但里面没 Nuitka：不能误导用户以为「直接就能用」
+            if warning.is_empty()
+                && let Some(item) = &local
+                && !item.nuitka
+            {
+                warning =
+                    "本机已有这个版本，但里面没有能用的 Nuitka；准备时会用独立副本，不动你原来的环境。"
+                        .to_string();
+            }
             PythonChoice {
                 version: line.to_string(),
                 label: label.to_string(),
                 support: "完全支持".to_string(),
-                recommended: *recommended,
+                recommended: false,
                 nuitka: format!("Nuitka {NUITKA_LATEST}"),
                 compiler,
                 warning,
-                can_prepare: true,
+                can_prepare,
+                local: local
+                    .as_ref()
+                    .map(|item| item.path.display().to_string())
+                    .unwrap_or_default(),
+                local_ready: local.as_ref().map(|item| item.nuitka).unwrap_or(false),
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    // 四个版本一律列出：Python 都能下载，缺的只是编译器，不该把整行藏起来
+    let mut versions = versions;
+    // 有没有版本是「本机缺编译器」而不是「下不了」：界面据此给配置编译器的入口
+    let msvc_missing = versions.iter().any(|item| !item.can_prepare);
+    match versions.iter_mut().rev().find(|item| item.can_prepare) {
+        Some(choice) => choice.recommended = true,
+        None => {
+            // 全都缺编译器时，至少把最高版本标成推荐，让用户知道该往哪配
+            if let Some(choice) = versions.iter_mut().next_back() {
+                choice.recommended = true;
+            }
+        }
+    }
+    // 之前选中的版本要是被过滤掉了（比如没 MSVC 却存着 3.13），落到推荐版本上
+    let selected = selected_python_line();
+    let selected = if versions.iter().any(|item| item.version == selected) {
+        selected
+    } else {
+        versions
+            .iter()
+            .find(|item| item.recommended)
+            .map(|item| item.version.clone())
+            .unwrap_or(selected)
+    };
 
     PythonOptions {
-        selected: selected_python_line(),
+        selected,
         versions,
+        msvc_missing,
     }
+}
+
+/// 本机已有的解释器。`nuitka` 为 true 表示里面已经有能用的 Nuitka，可以直接复用。
+pub(crate) struct LocalPython {
+    pub path: PathBuf,
+    pub nuitka: bool,
+}
+
+fn local_python(all: &[python_discovery::Python], version: PyVersion) -> Option<LocalPython> {
+    let python = all.iter().find(|item| {
+        item.version.major == version.major
+            && item.version.minor == version.minor
+            && item.is_cpython()
+    })?;
+    // 自由线程版没有二进制 wheel，拿它装 Nuitka 只会重演源码编译失败
+    let reported = fetch::run(&python.executable, &["--version"]).ok()?;
+    if reported.to_ascii_lowercase().contains("free-threading") {
+        return None;
+    }
+    let nuitka = scannuitka::supports(&python.executable, version).unwrap_or(false);
+    Some(LocalPython {
+        path: python.executable.clone(),
+        nuitka,
+    })
 }
 
 pub(crate) struct Ready {
@@ -186,7 +278,7 @@ pub(crate) fn plan(base: &Path, python_line: &str) -> EnvPlan {
     let has_python = python.is_file();
     let has_nuitka = has_python && fetch::run(&python, &["-m", "nuitka", "--version"]).is_ok();
     let tool = toolchain::resolve(python_version);
-    let winlibs_total = if tool.is_none() {
+    let winlibs_total = if tool.is_none() && toolchain::mingw_ok(python_version) {
         if has_python {
             winlibs_info(&python)
                 .map(|info| {
@@ -216,7 +308,7 @@ pub(crate) fn plan(base: &Path, python_line: &str) -> EnvPlan {
         0
     };
 
-    let winlibs_needed = tool.is_none() && winlibs_total > 0;
+    let winlibs_needed = tool.is_none() && toolchain::mingw_ok(python_version) && winlibs_total > 0;
     let mut items = Vec::new();
     let mut download_bytes = 0u64;
     let mut disk_bytes = 0u64;
@@ -355,11 +447,18 @@ fn ensure_compiler<F: FnMut(PrepareEvent)>(
         .map(|dir| dir.join("mingw64").join("bin").join("gcc.exe"))
         .unwrap_or_default();
     if gcc.is_file() {
-        progress(PrepareEvent::log(format!(
-            "复用已解压的 winlibs：{}",
-            gcc.display()
-        )));
-        return fetch::run(python, &["-m", "nuitka", "--version"]);
+        // 解压到一半也会留下 gcc.exe，真跑一次才算数
+        if fetch::run(&gcc, &["--version"]).is_ok() {
+            progress(PrepareEvent::log(format!(
+                "复用已解压的 winlibs：{}",
+                gcc.display()
+            )));
+            return fetch::run(python, &["-m", "nuitka", "--version"]);
+        }
+        progress(PrepareEvent::log("缓存的 winlibs 跑不起来，删掉重新下载"));
+        if let Some(root) = gcc.parent().and_then(Path::parent) {
+            let _ = std::fs::remove_dir_all(root);
+        }
     }
     let size = human_bytes(info.total);
     log::info(&format!("下载 winlibs：{}", info.mirror));
@@ -401,17 +500,33 @@ fn ensure_compiler<F: FnMut(PrepareEvent)>(
     fetch::run(python, &["-m", "nuitka", "--version"])
 }
 
+/// 压缩包下完了没有：大小对不上说明还没传完，留着给断点续传。
+fn archive_complete(info: &WinlibsInfo) -> bool {
+    let len = std::fs::metadata(&info.archive)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+    if len == 0 {
+        return false;
+    }
+    if info.total == 0 {
+        return true;
+    }
+    len == info.total
+}
+
 fn download_winlibs<F: FnMut(PrepareEvent)>(
     info: &WinlibsInfo,
     progress: &mut F,
 ) -> Result<(), String> {
-    if info.total > 0
-        && std::fs::metadata(&info.archive)
-            .map(|meta| meta.len() == info.total)
-            .unwrap_or(false)
-    {
-        progress(PrepareEvent::log("复用已下载的 winlibs 压缩包"));
-        return Ok(());
+    if archive_complete(info) {
+        // verify_archive 校验失败时会自己把坏包删掉
+        if fetch::verify_archive(&info.archive).is_ok() {
+            progress(PrepareEvent::log("复用已下载的 winlibs 压缩包"));
+            return Ok(());
+        }
+        progress(PrepareEvent::log(
+            "上次下的 winlibs 压缩包损坏，已删除，重新下载",
+        ));
     }
 
     let mut last_error = "没有可用的下载源".to_string();
@@ -431,8 +546,19 @@ fn download_winlibs<F: FnMut(PrepareEvent)>(
             ));
         }) {
             Ok(()) => {
-                progress(PrepareEvent::log("编译器组件下载完成"));
-                return Ok(());
+                // download_to 只管大小，这里再验结构：坏包留给 Nuitka 只会 FATAL
+                match fetch::verify_archive(&info.archive) {
+                    Ok(()) => {
+                        progress(PrepareEvent::log("编译器组件下载完成"));
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        last_error = error.clone();
+                        progress(PrepareEvent::log(format!(
+                            "{label} 下载的压缩包损坏：{error}"
+                        )));
+                    }
+                }
             }
             Err(error) => {
                 last_error = error.clone();
@@ -456,9 +582,42 @@ pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
     paths::set_base(base)?;
 
     let python_home = base.join("python").join(python_line);
-    let python = python_home.join("python.exe");
+    // managed 是程序自己管的便携解释器；复用本机解释器时 python 会指向别处
+    let managed = python_home.join("python.exe");
+    let mut python = managed.clone();
 
     log::info(&format!("开始准备环境：{}", base.display()));
+
+    // 本机已经有这一版、而且里面装着能用的 Nuitka：直接复用，不再下一份新解释器
+    if !managed.is_file() {
+        let locals = python_discovery::scan(&python_discovery::Policy {
+            minimum: PyVersion::new(0, 0, 0),
+            allow_prerelease: true,
+        });
+        if let Some(local) = local_python(&locals, python_version)
+            && local.nuitka
+        {
+            progress(PrepareEvent::stage(
+                "使用本机已有的 Python",
+                local.path.display().to_string(),
+            ));
+            log::info(&format!("复用本机 Python：{}", local.path.display()));
+            python = local.path;
+        }
+    }
+
+    if python == managed && managed.is_file() {
+        // 之前解压到的是自由线程版：它没有二进制 wheel，就地换成标准版
+        let existing = fetch::run(&python, &["--version"])?;
+        if existing.to_ascii_lowercase().contains("free-threading") {
+            progress(PrepareEvent::stage(
+                "替换自由线程版 Python",
+                "3.13t 没有二进制 wheel，换成标准版",
+            ));
+            std::fs::remove_dir_all(&python_home)
+                .map_err(|error| format!("清理旧 Python 失败：{error}"))?;
+        }
+    }
 
     if !python.is_file() {
         progress(PrepareEvent::stage(
@@ -517,8 +676,8 @@ pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
         }
 
         progress(PrepareEvent::stage(
-            "安装 Nuitka（含 onefile 压缩组件）",
-            "nuitka[onefile] · 清华 PyPI",
+            "安装 Nuitka",
+            "nuitka · 清华 PyPI",
         ));
         fetch::run_streaming(
             &python,
@@ -527,7 +686,7 @@ pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
                 "pip",
                 "install",
                 "--upgrade",
-                "nuitka[onefile]",
+                "nuitka",
                 "-i",
                 MIRROR,
             ],
@@ -543,6 +702,12 @@ pub(crate) fn prepare<F: FnMut(PrepareEvent)>(
         "优先复用已安装的 MSVC，缺失时才用 Nuitka winlibs",
     ));
     let mut tool = toolchain::resolve(python_version);
+    // 3.13 起 winlibs 不被接受：没有 MSVC 就别白下 267 MB 再撞 FATAL
+    if tool.is_none() && !toolchain::mingw_ok(python_version) {
+        return Err(format!(
+            "Python {python_line} 只能用 MSVC，本机没有可用的 MSVC，换 3.12 可以直接跑。"
+        ));
+    }
     let raw = if let Some(tool) = tool.as_ref() {
         progress(PrepareEvent::stage(
             "使用已有编译器，跳过下载",
@@ -812,8 +977,10 @@ fn pick_asset(html: &str, base: &str, python_line: &str) -> Option<(String, Stri
         position = start + end;
 
         let decoded = decode(href);
+        // 自由线程版（3.13t）没有 cp313 的二进制 wheel，zstandard 会退化成源码编译并要 MSVC，必须跳过
         let matched = decoded.starts_with(&prefix)
             && decoded.contains("x86_64-pc-windows-msvc")
+            && !decoded.contains("freethreaded")
             && decoded.contains("install_only_stripped.tar.gz");
         if matched {
             let url = if href.starts_with("http") {
@@ -843,6 +1010,7 @@ fn github_asset(python_line: &str) -> Result<(String, String), String> {
         };
         let matched = name.starts_with(&format!("cpython-{python_line}."))
             && name.contains("x86_64-pc-windows-msvc")
+            && !name.contains("freethreaded")
             && name.contains("install_only_stripped")
             && name.ends_with(".tar.gz");
         if matched {
@@ -933,6 +1101,20 @@ mod tests {
     fn ignores_other_platforms() {
         let only_arm = r#"<a href="cpython-3.12.16%2B20261110-aarch64-pc-windows-msvc-install_only_stripped.tar.gz">y</a>"#;
         assert!(pick_asset(only_arm, "https://mirror.example/", "3.12").is_none());
+    }
+
+    #[test]
+    fn skips_freethreaded_build() {
+        // 自由线程版排在前面也必须跳过：它没有二进制 wheel，装 zstandard 会退化成源码编译
+        let html = r#"
+            <a href="cpython-3.13.18%2B20261110-x86_64-pc-windows-msvc-freethreaded-install_only_stripped.tar.gz">t</a>
+            <a href="cpython-3.13.18%2B20261110-x86_64-pc-windows-msvc-install_only_stripped.tar.gz">n</a>
+        "#;
+        let (_, name) = pick_asset(html, "https://mirror.example/base/", "3.13").expect("asset");
+        assert_eq!(
+            name,
+            "cpython-3.13.18+20261110-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
+        );
     }
 
     #[test]

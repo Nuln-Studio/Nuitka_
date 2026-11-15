@@ -17,14 +17,14 @@ pub(crate) fn select_python() -> Result<PythonCandidate> {
         return Err(NuitkaRsError::PythonNotFound);
     }
 
-    // 设置页里固定过版本就用它；没固定过才退回「准备环境时选过的版本」。
-    let configured = settings::read_settings().python_version;
-    let wanted = if configured.trim().is_empty() {
-        paths::selected_python()
-    } else {
-        Some(configured.trim().to_string())
-    };
-    if let Some(line) = wanted
+    // 设置里给了具体解释器路径就直接用它，路径失效才退回下面按版本挑
+    if let Some(path) = settings::python_path()
+        && let Some(python) = python_discovery::probe(&path)
+    {
+        return Ok(into_candidate(python));
+    }
+
+    if let Some(line) = paths::selected_python()
         && let Some((major, minor)) = parse_line(&line)
         && let Some(index) = found
             .iter()
