@@ -81,7 +81,7 @@ nuitka-rs/
 ├── src/nuitka/       # 内核：组件集 + 准备环境 + 打包执行
 ├── src/ui/           # 外壳：Tauri 命令与前端
 │   └── web/          # index.html / style.css / app.js
-├── icons/            # 应用图标
+├── icons/            # 应用图标（暂时未启用：版权待定，见 tauri.conf.json 的 bundle.icon）
 └── capabilities/     # 窗口权限
 ```
 

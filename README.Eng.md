@@ -80,7 +80,7 @@ nuitka-rs/
 ├── src/nuitka/       # core: component set + environment setup + build execution
 ├── src/ui/           # shell: Tauri commands and frontend
 │   └── web/          # index.html / style.css / app.js
-├── icons/            # app icons
+├── icons/            # app icons (currently unused: licensing to be settled, see bundle.icon in tauri.conf.json)
 └── capabilities/     # window permissions
 ```
 
