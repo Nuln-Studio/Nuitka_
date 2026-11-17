@@ -205,6 +205,18 @@ input { font: inherit; }
   font-variant-numeric: tabular-nums;
 }
 
+/* 图标预览：跟「选择 .ico」按钮同高，不参与布局撑开 */
+.icon-preview {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: #fff;
+  object-fit: contain;
+  image-rendering: -webkit-optimize-contrast;
+}
+
 /* ---------------- 按钮与链接 ---------------- */
 
 .btn {

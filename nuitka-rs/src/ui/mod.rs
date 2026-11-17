@@ -264,11 +264,41 @@ fn cancel_build() -> Result<(), String> {
 
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
-    std::process::Command::new("explorer.exe")
-        .arg(path)
+    let dir = std::path::Path::new(path.trim());
+    if !dir.exists() {
+        return Err(format!("目录不存在：{}", dir.display()));
+    }
+    crate::util::command("explorer.exe")
+        .arg(dir)
         .spawn()
         .map(|_| ())
         .map_err(|error| format!("无法打开目录：{error}"))
+}
+
+/// 读回用户选的 `.ico`，编码成 data URI 给界面画预览。
+///
+/// 意图上只服务预览：限 1 MB、必须是 `.ico`，不做通用文件读取。
+#[tauri::command]
+fn icon_preview(path: String) -> Result<String, String> {
+    let file = std::path::Path::new(path.trim());
+    if !file.is_file() {
+        return Err(format!("图标文件不存在：{}", file.display()));
+    }
+    let is_ico = file
+        .extension()
+        .map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("ico"))
+        .unwrap_or(false);
+    if !is_ico {
+        return Err(format!("图标必须是 .ico 文件：{}", file.display()));
+    }
+    let size = std::fs::metadata(file)
+        .map_err(|error| format!("读不到图标信息：{error}"))?
+        .len();
+    if size > 1024 * 1024 {
+        return Err("图标文件超过 1 MB，不像是 .ico".to_string());
+    }
+    let bytes = std::fs::read(file).map_err(|error| format!("读取图标失败：{error}"))?;
+    Ok(crate::util::base64(&bytes))
 }
 
 #[tauri::command]
@@ -311,6 +341,7 @@ pub fn run() {
             pick_dir,
             pick_script,
             pick_icon,
+            icon_preview,
             pick_python,
             read_config,
             write_settings,

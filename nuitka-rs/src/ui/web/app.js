@@ -888,6 +888,37 @@
     return state.outDir.replace(/[\\/]+$/, '') + '\\' + leaf;
   }
 
+  // 图标预览：按路径缓存，同一个 .ico 只读一次
+  let previewPath = '';
+
+  async function refreshIconPreview() {
+    const img = $('iconPreview');
+    if (!img) return;
+    const path = state.icon || '';
+    if (!path) {
+      img.hidden = true;
+      img.removeAttribute('src');
+      previewPath = '';
+      return;
+    }
+    if (path === previewPath) {
+      img.hidden = false;
+      return;
+    }
+    try {
+      const data = await bridge.invoke('icon_preview', { path });
+      if (state.icon !== path) return;          // 期间用户换了图标，丢弃这次结果
+      img.src = 'data:image/x-icon;base64,' + data;
+      img.hidden = false;
+      previewPath = path;
+    } catch (error) {
+      img.hidden = true;
+      img.removeAttribute('src');
+      previewPath = '';
+      $('iconPath').title = String(error);
+    }
+  }
+
   function update() {
     $('scriptName').textContent = state.script ? baseName(state.script) : '未选择';
     $('scriptPath').textContent = state.script || '';
@@ -896,6 +927,7 @@
     $('outPath').title = state.outDir || '';
     $('iconPath').textContent = state.icon ? baseName(state.icon) : '未选择';
     $('iconPath').title = state.icon || '';
+    refreshIconPreview();
 
     if (!building) {
       const status = $('statusText');
