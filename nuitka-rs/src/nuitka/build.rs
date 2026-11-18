@@ -23,6 +23,14 @@ struct Task {
     pid: u32,
 }
 
+/// 一次 `execute` 的结果。`cancelled` 单独拿出来，
+/// 因为被杀掉的进程和编译失败在退出码上长得一模一样。
+struct RunResult {
+    ok: bool,
+    failure: String,
+    cancelled: bool,
+}
+
 fn next_task_id() -> u64 {
     NEXT_TASK.fetch_add(1, Ordering::Relaxed)
 }
@@ -48,6 +56,31 @@ fn take_task() -> Option<Task> {
 
 fn running() -> bool {
     RUNNING.lock().map(|slot| slot.is_some()).unwrap_or(false)
+}
+
+/// 被用户取消的任务 id。子进程被 taskkill 杀掉后只能拿到「退出码非零」，
+/// 光看退出码分不清「编译失败」和「用户不要了」，这里单独记一笔。
+static CANCELLED: Mutex<Option<u64>> = Mutex::new(None);
+
+fn mark_cancelled(id: u64) {
+    if let Ok(mut slot) = CANCELLED.lock() {
+        *slot = Some(id);
+    }
+}
+
+fn was_cancelled(id: u64) -> bool {
+    CANCELLED
+        .lock()
+        .map(|slot| *slot == Some(id))
+        .unwrap_or(false)
+}
+
+fn clear_cancelled(id: u64) {
+    if let Ok(mut slot) = CANCELLED.lock()
+        && *slot == Some(id)
+    {
+        *slot = None;
+    }
 }
 
 
@@ -159,6 +192,23 @@ fn arguments(request: &Request) -> Vec<String> {
     }
     args.push(request.script.clone());
     args
+}
+
+/// 只有失败信息落在编译器身上，才值得换后端再编一遍。
+///
+/// 反例：脚本语法错、缺模块、路径写错——这些换 gcc 也一样失败，
+/// 白白多等一整轮完整编译，用户最后看到的还是同一句报错。
+fn is_compiler_failure(detail: &str) -> bool {
+    const HINTS: &[&str] = &[
+        "cl.exe",
+        "link.exe",
+        "msvc",
+        "vcvars",
+        "visual studio",
+        "工具集",
+    ];
+    let lower = detail.to_lowercase();
+    HINTS.iter().any(|hint| lower.contains(hint))
 }
 
 fn clean(value: &str) -> Option<&str> {
@@ -407,24 +457,46 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
     let started = Instant::now();
     let mut args = arguments(request);
     let mut notices: Vec<String> = Vec::new();
-    let (mut ok, mut failure) = execute(&python, &args, tool.as_ref(), &mut notices, &mut on_line)?;
+    let mut result = execute(&python, &args, tool.as_ref(), &mut notices, &mut on_line)?;
 
-    // MSVC 认不出来时（新版本 VS 很常见），退到 Nuitka 自带的 winlibs 再试一次
-    if !ok
+    if result.cancelled {
+        let seconds = started.elapsed().as_secs();
+        log::info(&format!("打包已取消（{seconds} 秒）"));
+        return Ok(Outcome {
+            ok: false,
+            target: String::new(),
+            seconds,
+            detail: "已取消".to_string(),
+            notices,
+        });
+    }
+
+    // MSVC 认不出来时（新版本 VS 很常见），退到 Nuitka 自带的 winlibs 再试一次。
+    // 前提是失败真出在编译器上：脚本自己写错了，换后端也是白跑。
+    if !result.ok
         && request.compiler.starts_with("msvc")
+        && is_compiler_failure(&result.failure)
         && version.map(toolchain::mingw_ok).unwrap_or(true)
         && let Some(gcc) = toolchain::fallback_gcc()
     {
-        on_line("[重试] MSVC 后端失败，改用 winlibs gcc 重新编译");
+        on_line("[重试] MSVC 编译失败，改用 winlibs gcc 重新编译");
         log::info(&format!("MSVC 失败，改用 {} 重试", gcc.describe()));
         let mut retry = request.clone();
         retry.compiler = "gcc".to_string();
         args = arguments(&retry);
         on_line(&format!("[命令] {}", command_line(&retry)));
-        let (next_ok, next_failure) =
-            execute(&python, &args, Some(&gcc), &mut notices, &mut on_line)?;
-        ok = next_ok;
-        failure = next_failure;
+        result = execute(&python, &args, Some(&gcc), &mut notices, &mut on_line)?;
+        if result.cancelled {
+            let seconds = started.elapsed().as_secs();
+            log::info(&format!("打包已取消（{seconds} 秒）"));
+            return Ok(Outcome {
+                ok: false,
+                target: String::new(),
+                seconds,
+                detail: "已取消".to_string(),
+                notices,
+            });
+        }
     }
 
     for notice in &notices {
@@ -437,7 +509,7 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
         .unwrap_or_default();
     let produced = !target.is_empty() && Path::new(&target).exists();
 
-    if ok && produced {
+    if result.ok && produced {
         log::info(&format!("打包完成：{target}（{seconds} 秒）"));
         Ok(Outcome {
             ok: true,
@@ -447,10 +519,10 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
             notices,
         })
     } else {
-        let detail = if ok {
+        let detail = if result.ok {
             format!("编译结束但没有找到产物：{target}")
         } else {
-            failure
+            result.failure
         };
         log::error(&format!("打包失败：{detail}"));
         Ok(Outcome {
@@ -463,14 +535,14 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
     }
 }
 
-/// 起一个 Nuitka 进程，把输出逐行吐出去，返回 (是否成功, 失败描述)。
+/// 起一个 Nuitka 进程，把输出逐行吐出去。
 fn execute(
     python: &Path,
     args: &[String],
     tool: Option<&toolchain::Toolchain>,
     notices: &mut Vec<String>,
     on_line: &mut dyn FnMut(&str),
-) -> Result<(bool, String), String> {
+) -> Result<RunResult, String> {
     let mut command = crate::util::command(python);
     command
         .args(args)
@@ -516,10 +588,16 @@ fn execute(
     }
 
     let status = child.wait().map_err(|error| error.to_string())?;
+    let cancelled = was_cancelled(task_id);
+    clear_cancelled(task_id);
     clear_task(task_id);
 
     if status.success() {
-        Ok((true, String::new()))
+        Ok(RunResult {
+            ok: true,
+            failure: String::new(),
+            cancelled,
+        })
     } else {
         let code = status
             .code()
@@ -529,7 +607,11 @@ fn execute(
             Some(line) => format!("Nuitka 退出码 {code}：{}", line.trim()),
             None => format!("Nuitka 退出码 {code}"),
         };
-        Ok((false, detail))
+        Ok(RunResult {
+            ok: false,
+            failure: detail,
+            cancelled,
+        })
     }
 }
 
@@ -569,6 +651,7 @@ fn decode_line(bytes: &[u8]) -> String {
 /// 取消正在跑的打包（连子进程一起杀）。
 pub(crate) fn cancel() -> Result<(), String> {
     let task = take_task().ok_or_else(|| "当前没有正在进行的打包".to_string())?;
+    mark_cancelled(task.id);
 
     let status = crate::util::command("taskkill.exe")
         .args(["/PID", &task.pid.to_string(), "/T", "/F"])
@@ -629,6 +712,27 @@ mod tests {
         register_task(second, 222);
         clear_task(second);
         assert!(!running());
+    }
+
+    /// P0-2 回归：换后端重试必须由「编译器相关」的失败触发。
+    #[test]
+    fn only_compiler_failures_trigger_the_gcc_retry() {
+        // 真的出在 cl.exe 上：值得换 gcc 再编一遍
+        assert!(is_compiler_failure(
+            "Nuitka 退出码 2：FATAL: Visual C++ compiler 'cl.exe' was not found on this system"
+        ));
+        assert!(is_compiler_failure("Nuitka 退出码 1：vcvarsall.bat 返回 1"));
+        assert!(is_compiler_failure("MSVC 工具集 14.50 未安装"));
+
+        // 用户自己的脚本写错了：换 gcc 也一样失败，不该重试
+        assert!(!is_compiler_failure(
+            "Nuitka 退出码 1：FATAL: Error, syntax error in module 'main'"
+        ));
+        assert!(!is_compiler_failure(
+            "Nuitka 退出码 1：FATAL: Error, cannot find 'requests' module"
+        ));
+        assert!(!is_compiler_failure("Nuitka 退出码 1：文件不存在：D:\\work\\main.py"));
+        assert!(!is_compiler_failure(""));
     }
 
     #[test]
