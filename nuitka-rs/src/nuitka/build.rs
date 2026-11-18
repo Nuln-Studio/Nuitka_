@@ -1,10 +1,11 @@
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Sender, channel};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::python_discovery::PyVersion;
 use super::{log, toolchain};
@@ -103,6 +104,9 @@ pub(crate) struct Request {
     pub show_progress: bool,
     #[serde(default)]
     pub download: bool,
+    /// 打包完试运行一次产物，用来抓「编译成功但一启动就缺包」这类问题
+    #[serde(default)]
+    pub smoke: bool,
     /// "msvc" 或 "gcc"；不指定的话 Nuitka 会自己挑，往往挑错
     #[serde(default)]
     pub compiler: String,
@@ -271,6 +275,122 @@ fn is_compression_oom(detail: &str) -> bool {
             || lower.contains("not enough memory")
             || lower.contains("out of memory")
             || lower.contains("内存不足"))
+}
+
+/// 产物试运行的观察窗口。单文件产物要先自解压，几秒钟都算正常。
+const SMOKE_SECONDS: u64 = 8;
+
+enum Smoke {
+    /// 起来了（包括还在跑=GUI 程序启动成功）
+    Started,
+    /// 一启动就死在缺包上
+    Missing(Vec<String>),
+}
+
+/// 真跑一次产物。这是唯一能抓「动态导入缺包」的手段：
+/// 编译时 Nuitka 只跟静态 import 图，`importlib.import_module("yaml")` 它看不见。
+fn smoke_run(target: &str) -> Result<Smoke, String> {
+    let mut command = crate::util::command(target);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法启动产物：{error}"))?;
+
+    let sink = Arc::new(Mutex::new(String::new()));
+    let mut readers = Vec::new();
+    if let Some(stream) = child.stdout.take() {
+        readers.push(collect_text(stream, sink.clone()));
+    }
+    if let Some(stream) = child.stderr.take() {
+        readers.push(collect_text(stream, sink.clone()));
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(SMOKE_SECONDS);
+    let mut status = None;
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(finished)) => {
+                status = Some(finished);
+                break;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(150)),
+            Err(error) => return Err(format!("无法读取产物状态：{error}")),
+        }
+    }
+    // 到了时限还在跑，说明程序活着；不能把它留在后台挡着用户的文件
+    if status.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    for reader in readers {
+        let _ = reader.join();
+    }
+
+    let text = sink.lock().map(|text| text.clone()).unwrap_or_default();
+    crate::nuitka::log::write(&format!(
+        "产物试运行：{}",
+        text.lines().take(20).collect::<Vec<_>>().join(" / ")
+    ));
+
+    match status {
+        Some(finished) if !finished.success() => {
+            let modules = missing_modules(&text);
+            if modules.is_empty() {
+                // 退出了但看不出缺包：可能是需要命令行参数、或者缺少非 Python 运行库，
+                // 这种情况不该把一次成功的编译判成失败
+                Ok(Smoke::Started)
+            } else {
+                Ok(Smoke::Missing(modules))
+            }
+        }
+        _ => Ok(Smoke::Started),
+    }
+}
+
+/// 从产物输出里抠出 `No module named 'xxx'` 的模块名，顶层去重。
+fn missing_modules(text: &str) -> Vec<String> {
+    const MARK: &str = "No module named ";
+    let mut found: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let Some(at) = line.find(MARK) else { continue };
+        let rest = &line[at + MARK.len()..];
+        // 报错文本里模块名一般带引号：No module named 'yaml'
+        let rest = rest.trim_start_matches(['\'', '"']);
+        let name: String = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '.')
+            .collect();
+        let top = name.split('.').next().unwrap_or("").to_string();
+        if !top.is_empty() && !found.contains(&top) {
+            found.push(top);
+        }
+    }
+    found
+}
+
+/// 读子进程的每一行，攒进一个共享字符串。
+fn collect_text<R: Read + Send + 'static>(stream: R, sink: Arc<Mutex<String>>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stream);
+        let mut buffer: Vec<u8> = Vec::new();
+        loop {
+            buffer.clear();
+            match reader.read_until(b'\n', &mut buffer) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let line = decode_line(&buffer);
+                    if let Ok(mut text) = sink.lock() {
+                        text.push_str(&line);
+                        text.push('\n');
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    })
 }
 
 fn clean(value: &str) -> Option<&str> {
@@ -632,6 +752,34 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
         .unwrap_or_default();
     let produced = !target.is_empty() && Path::new(&target).exists();
 
+    // 编译通过不等于产物能用：动态导入的库在编译阶段是隐形的，
+    // 只有真跑一次才知道。窗口用户可以在设置里关掉，因为 GUI 程序会闪一下。
+    if result.ok && produced && request.smoke {
+        on_line(&format!("[自检] 试运行产物，最多 {SMOKE_SECONDS} 秒"));
+        match smoke_run(&target)? {
+            Smoke::Started => on_line("[自检] 产物启动正常"),
+            Smoke::Missing(modules) => {
+                let packages: Vec<String> =
+                    modules.iter().map(|name| crate::nuitka::deps::pip_name(name)).collect();
+                let python = clean(&request.python).unwrap_or("python");
+                let detail = format!(
+                    "打包完成，但产物一启动就失败：缺少 {}。\n\
+这类依赖是动态导入的，打包前的静态检查看不到。\n装法：\"{python}\" -m pip install {}",
+                    modules.join("、"),
+                    packages.join(" ")
+                );
+                log::error(&format!("产物试运行失败：{}", modules.join("、")));
+                return Ok(Outcome {
+                    ok: false,
+                    target,
+                    seconds,
+                    detail,
+                    notices,
+                });
+            }
+        }
+    }
+
     if result.ok && produced {
         log::info(&format!("打包完成：{target}（{seconds} 秒）"));
         Ok(Outcome {
@@ -813,6 +961,7 @@ mod tests {
             console: false,
             show_progress: true,
             download: true,
+            smoke: false,
             compiler: "msvc:14.50".to_string(),
             extra: "--follow-imports".to_string(),
         }
@@ -928,6 +1077,18 @@ mod tests {
         // 读不到内存数据时不能擅自替用户决定不压
         let unknown = arguments_for(&sample(), None);
         assert!(!unknown.contains(&"--onefile-no-compression".to_string()));
+    }
+
+    /// 试运行产物时要从输出里认出缺的是哪个模块。
+    #[test]
+    fn missing_modules_are_extracted_from_product_output() {
+        let text = "Traceback (most recent call last):\n\
+  File \"main.py\", line 3, in <module>\n\
+ModuleNotFoundError: No module named 'yaml'\n\
+ModuleNotFoundError: No module named 'yaml.safe_load'\n";
+        assert_eq!(missing_modules(text), vec!["yaml".to_string()]);
+        assert!(missing_modules("启动主程序失败：No module named 'requests'").contains(&"requests".to_string()));
+        assert!(missing_modules("一切正常，服务已启动").is_empty());
     }
 
     #[test]
@@ -1222,6 +1383,7 @@ which among other things depends on it.";
             console: true,
             show_progress: true,
             download: true,
+            smoke: false,
             compiler: "msvc:14.50".to_string(),
             extra: String::new(),
         };
@@ -1276,6 +1438,7 @@ which among other things depends on it.";
             console: true,
             show_progress: true,
             download: true,
+            smoke: false,
             compiler: "msvc:14.50".to_string(),
             extra: String::new(),
         };

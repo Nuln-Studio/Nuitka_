@@ -23,6 +23,7 @@
     console: 'force',
     progress: true,
     download: true,
+    smoke: true,
     extra: '',
     pythonChoice: '3.12',
     pythonCanPrepare: true,
@@ -830,6 +831,7 @@
 
       $('confirmOk').textContent = '开始下载';
       $('confirmCancel').textContent = '取消';
+      $('confirmNote').classList.remove('hidden');
       $('confirmOk').onclick = function () { finishConfirm(true); };
       $('confirmCancel').onclick = function () { finishConfirm(false); };
       $('confirmLayer').classList.remove('hidden');
@@ -851,6 +853,9 @@
 
       $('confirmOk').textContent = okLabel;
       $('confirmCancel').textContent = cancelLabel;
+      // 这条说明只属于下载流程，别的确认框不能带出来
+      $('confirmNote').classList.add('hidden');
+      $('confirmOk').disabled = false;
       $('confirmOk').onclick = function () { finishConfirm(true); };
       $('confirmCancel').onclick = function () { finishConfirm(false); };
       $('confirmLayer').classList.remove('hidden');
@@ -871,6 +876,7 @@
       console: state.console === 'force',
       show_progress: state.progress,
       download: state.download,
+      smoke: state.smoke,
       compiler: state.compiler,
       extra: state.extra
     };
@@ -970,6 +976,7 @@
       console: state.console,
       progress: state.progress,
       download: state.download,
+      smoke: state.smoke,
       extra: state.extra
     };
   }
@@ -991,12 +998,14 @@
     state.console = form.console === 'disable' ? 'disable' : 'force';
     state.progress = form.progress !== false;
     state.download = form.download !== false;
+    state.smoke = form.smoke !== false;
     state.extra = form.extra || '';
 
     $('appName').value = state.name;
     $('extraArgs').value = state.extra;
     $('optProgress').checked = state.progress;
     $('optDownload').checked = state.download;
+    $('optSmoke').checked = state.smoke;
     paintSegment('modeSeg', state.mode);
     paintSegment('consoleSeg', state.console);
     update();
@@ -1124,6 +1133,38 @@
     }
   }
 
+  /*
+   * 打包前先确认一下用的哪个 Python。
+   *
+   * 静态查依赖那套已经砍了：按模块名猜 pip 包，猜不对就会让人去装一个不存在的包，
+   * 代价比收益大。缺库这件事交给「打包后跑一次产物」去抓，抓到了再把矛头指回环境。
+   * 这里只做一件事：不管你用的是哪个 Python 都提醒一次，并把当前路径摆出来。
+   */
+  async function confirmPython() {
+    if (!state.pythonPath || !bridge) return true;
+
+    const go = await confirmPrompt(
+      '关于 Python 环境',
+      '请确认你的脚本在本地能够正常运行——Nuitka++ 只对打包流程负责，\n'
+        + '不对脚本及项目本身的可运行性、完整性负责。\n\n'
+        + '强烈建议使用非 Nuitka++ 自行下载的 Python。\n'
+        + '自带的那份只装了编译要用的东西，脚本自己的第三方库一个也没有，\n'
+        + '用它打出来的 exe 很可能一启动就报缺库。\n'
+        + '如果你本来就用这份 Python 做开发，且脚本在本地能正常跑通，\n'
+        + '那基本可以忽略这条提醒。\n\n'
+        + '当前选择的 Python：\n' + state.pythonPath + '\n\n'
+        + '如果打包后的 exe 提示库缺失，未必是 Nuitka++ 出了问题——\n'
+        + '请先检查这个 Python 环境是否足以支持你的脚本运行或打包。',
+      '忽略，继续打包',
+      '跳到配置页'
+    );
+
+    if (!go) {
+      openSettingsPage();
+      return false;
+    }
+    return true;
+  }
   async function startBuild() {
     if (building || preflight) return;
     if (!state.script) {
@@ -1139,6 +1180,7 @@
       return;
     }
     if (state.mode === 'onefile' && !(await ensureCompression())) return;
+    if (!(await confirmPython())) return;
 
     // 打包前先记住这份配置：失败也能从上次的参数直接重试
     if (state.autoSave && bridge) {
@@ -1252,6 +1294,10 @@
     state.download = event.target.checked;
   });
 
+  $('optSmoke').addEventListener('change', function (event) {
+    state.smoke = event.target.checked;
+  });
+
   $('resetForm').addEventListener('click', function () {
     if (building) return;
     state.script = '';
@@ -1263,10 +1309,12 @@
     state.console = 'force';
     state.progress = true;
     state.download = true;
+    state.smoke = true;
     $('appName').value = '';
     $('extraArgs').value = '';
     $('optProgress').checked = true;
     $('optDownload').checked = true;
+    $('optSmoke').checked = true;
     Array.prototype.forEach.call($('modeSeg').children, function (child, index) {
       child.classList.toggle('on', index === 0);
     });
@@ -1374,12 +1422,16 @@
 
   /* ---------------- 设置页 ---------------- */
 
-  $('openSettings').addEventListener('click', function () {
-    // 正在打包时进来，返回要回进度页；否则回配置页
+  /* 从别处（比如打包前的 Python 提示）跳过来时也走这一套：返回按钮该回哪个页面按当前位置定 */
+  function openSettingsPage() {
     settingsFrom = $('pageBuild').classList.contains('hidden') ? 'config' : 'build';
     $('settingsBack').textContent = settingsFrom === 'build' ? '返回打包进度' : '返回项目配置';
     paintSettings();
     showPage('settings');
+  }
+
+  $('openSettings').addEventListener('click', function () {
+    openSettingsPage();
   });
 
   $('settingsBack').addEventListener('click', function () {
@@ -1401,6 +1453,77 @@
     $('pythonInput').value = picked;
     await applyToolchainSetting();
   });
+
+  $('scanPython').addEventListener('click', async function () {
+    if (!bridge || building) return;
+    const box = $('pythonScanResult');
+    box.classList.remove('hidden');
+    box.textContent = '正在扫描本机 Python，并统计各自的库数量…';
+
+    let list;
+    try {
+      list = await bridge.invoke('scan_pythons', {});
+    } catch (error) {
+      box.textContent = '扫描失败：' + String(error);
+      return;
+    }
+    renderPythonScan(box, list || []);
+  });
+
+  /* 每行一个解释器：版本、库数量、路径。点了就填进输入框，跟「浏览」等价 */
+  function renderPythonScan(box, list) {
+    box.textContent = '';
+    if (!list.length) {
+      box.textContent = '没有找到可用的 Python。';
+      return;
+    }
+    list.forEach(function (item) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'scan-row' + (item.managed ? ' warn' : '');
+      row.title = item.path;
+
+      const main = document.createElement('span');
+      main.className = 'scan-main';
+
+      const version = document.createElement('strong');
+      version.textContent = 'Python ' + item.version;
+      main.appendChild(version);
+
+      const meta = document.createElement('small');
+      meta.textContent = item.packages + ' 个库 · ' + item.source;
+      main.appendChild(meta);
+
+      row.appendChild(main);
+
+      const path = document.createElement('span');
+      path.className = 'scan-path';
+      path.textContent = item.path;
+      row.appendChild(path);
+
+      if (item.hint) {
+        const hint = document.createElement('span');
+        hint.className = 'scan-hint';
+        hint.textContent = item.hint;
+        row.appendChild(hint);
+      }
+
+      if (item.managed) {
+        const badge = document.createElement('span');
+        badge.className = 'scan-badge';
+        badge.textContent = '不推荐';
+        row.appendChild(badge);
+      }
+
+      row.addEventListener('click', async function () {
+        state.pythonSetting = item.path;
+        $('pythonInput').value = item.path;
+        await applyToolchainSetting();
+      });
+
+      box.appendChild(row);
+    });
+  }
 
   $('pythonInput').addEventListener('change', async function (event) {
     if (building) return;

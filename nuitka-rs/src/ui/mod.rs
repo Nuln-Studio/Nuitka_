@@ -227,6 +227,55 @@ async fn install_compression(python: String) -> Result<(), String> {
     .map_err(|error| error.to_string())?
 }
 
+/// 设置页「扫描」：列出本机所有 Python，附带各自装了多少库。
+/// 库数少的基本就是纯净解释器，打出来的 exe 最容易缺库，所以单独标出来。
+#[derive(serde::Serialize)]
+struct PythonOption {
+    path: String,
+    version: String,
+    source: String,
+    packages: usize,
+    /// Nuitka++ 自己下载的那个：只该用来编译，别指望它带着业务依赖
+    managed: bool,
+    hint: String,
+}
+
+#[tauri::command]
+async fn scan_pythons() -> Result<Vec<PythonOption>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let policy = nuitka::python_discovery::Policy::default();
+        let mut list: Vec<PythonOption> = nuitka::python_discovery::scan(&policy)
+            .into_iter()
+            .map(|python| {
+                let packages = nuitka::deps::package_count(&python.executable);
+                let managed = nuitka::deps::managed_python(&python.executable);
+                let hint = if managed {
+                    "Nuitka++ 自行下载，仅用于编译，不推荐用来打包带依赖的项目".to_string()
+                } else if packages == 0 {
+                    "一个第三方库都没有，打包带依赖的项目会缺库".to_string()
+                } else {
+                    String::new()
+                };
+                PythonOption {
+                    path: python.executable.display().to_string(),
+                    version: python.version.to_string(),
+                    source: python.source.tag().to_string(),
+                    packages,
+                    managed,
+                    hint,
+                }
+            })
+            .collect();
+        // 库多的排前面：用户通常就是用这个开发环境跑的脚本
+        list.sort_by_key(|item| std::cmp::Reverse(item.packages));
+        list
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+/// 启动打包。缺库这件事不再靠静态检查预判（按名字猜容易猜错，代价是让人去装不存在的包），
+/// 而是由 `build::run` 在产物生成后试运行一次，真缺库了再顺着报错指回 Python 环境。
 #[tauri::command]
 async fn start_build(app: AppHandle, request: build::Request) -> Result<build::Outcome, String> {
     let handle = app.clone();
@@ -352,6 +401,7 @@ pub fn run() {
             preview_command,
             compression_ready,
             install_compression,
+            scan_pythons,
             start_build,
             cancel_build,
             open_log,

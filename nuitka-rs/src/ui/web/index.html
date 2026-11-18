@@ -216,6 +216,7 @@
                 <div class="control checks">
                   <label class="check"><input type="checkbox" id="optProgress" checked><span>显示编译进度</span></label>
                   <label class="check"><input type="checkbox" id="optDownload" checked><span>缺组件时自动下载</span></label>
+                  <label class="check"><input type="checkbox" id="optSmoke" checked><span>完成后试运行产物</span></label>
                 </div>
               </div>
             </section>
@@ -323,9 +324,11 @@
                 <div class="control">
                   <div class="control-row">
                     <input class="input grow-input" id="pythonInput" placeholder="留空自动选择，例如 C:\Python312\python.exe" spellcheck="false">
+                    <button class="btn secondary small" id="scanPython" title="扫描本机所有 Python，并列出各自装了多少库">扫描</button>
                     <button class="btn secondary small" id="browsePython">浏览</button>
                   </div>
                   <p class="path" id="settingsPython"></p>
+                  <div class="python-scan hidden" id="pythonScanResult"></div>
                 </div>
               </div>
 
@@ -408,7 +411,8 @@
   <div class="modal confirm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
     <h3 id="confirmTitle">需要下载编译环境</h3>
     <div class="confirm-body" id="confirmBody"></div>
-    <p class="modal-note">下载过程会显示实时速度、剩余时间和安装日志。</p>
+    <!-- 这条只说下载，别的确认框用不上，默认藏起来，由下载流程自己打开 -->
+    <p class="modal-note hidden" id="confirmNote">下载过程会显示实时速度、剩余时间和安装日志。</p>
     <div class="modal-actions">
       <button class="btn secondary" id="confirmCancel">取消</button>
       <button class="btn primary" id="confirmOk">开始下载</button>

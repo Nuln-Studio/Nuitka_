@@ -1,6 +1,7 @@
 mod env_check;
 pub(crate) mod bootstrap;
 pub(crate) mod build;
+pub(crate) mod deps;
 pub(crate) mod diagnostics;
 pub(crate) mod dialog;
 pub(crate) mod fetch;

@@ -92,6 +92,9 @@ pub(crate) struct Form {
     pub progress: bool,
     #[serde(default = "yes")]
     pub download: bool,
+    /// 打包完是否试运行一次产物；关掉它就不会有窗口闪一下
+    #[serde(default = "yes")]
+    pub smoke: bool,
     #[serde(default)]
     pub extra: String,
 }
@@ -107,6 +110,7 @@ impl Default for Form {
             console: force(),
             progress: true,
             download: true,
+            smoke: true,
             extra: String::new(),
         }
     }
