@@ -185,13 +185,43 @@ fn arguments(request: &Request) -> Vec<String> {
     if let Some(icon) = clean(&request.icon) {
         args.push(format!("--windows-icon-from-ico={icon}"));
     }
-    for token in request.extra.split_whitespace() {
-        if !token.is_empty() {
-            args.push(token.to_string());
-        }
-    }
+    args.extend(extra_tokens(&request.extra));
     args.push(request.script.clone());
     args
+}
+
+/// 按空白切附加参数，但 `"` 包起来的部分算一个整体。
+///
+/// 直接 `split_whitespace` 会把 `--include-data-dir=D:\我的 数据=data` 切成两段，
+/// Nuitka 于是收到两个错参数。Windows 上带空格的路径太常见了。
+fn extra_tokens(extra: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut started = false;
+
+    for ch in extra.chars() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+                started = true;
+            }
+            ch if ch.is_whitespace() && !in_quotes => {
+                if started {
+                    tokens.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            ch => {
+                current.push(ch);
+                started = true;
+            }
+        }
+    }
+    if started {
+        tokens.push(current);
+    }
+    tokens
 }
 
 /// 只有失败信息落在编译器身上，才值得换后端再编一遍。
@@ -733,6 +763,34 @@ mod tests {
         ));
         assert!(!is_compiler_failure("Nuitka 退出码 1：文件不存在：D:\\work\\main.py"));
         assert!(!is_compiler_failure(""));
+    }
+
+    /// P1-1 回归：带空格的路径不能被空格切断。
+    #[test]
+    fn extra_args_keep_quoted_paths_whole() {
+        let mut request = sample();
+        request.extra = "--include-data-dir=\"D:\\我的 数据=data\" --follow-imports".to_string();
+        let args = arguments(&request);
+        assert!(
+            args.contains(&"--include-data-dir=D:\\我的 数据=data".to_string()),
+            "引号内的空格被切开了：{args:?}"
+        );
+        assert!(args.contains(&"--follow-imports".to_string()));
+        assert_eq!(
+            args.iter().filter(|arg| arg.contains("数据")).count(),
+            1,
+            "带空格的那条路径被拆成两段"
+        );
+    }
+
+    #[test]
+    fn extra_args_split_on_plain_whitespace() {
+        assert_eq!(
+            extra_tokens("  --a   --b=c \t"),
+            vec!["--a".to_string(), "--b=c".to_string()]
+        );
+        assert!(extra_tokens("   ").is_empty());
+        assert!(extra_tokens("").is_empty());
     }
 
     #[test]
