@@ -1191,7 +1191,10 @@
         setBuildHead('failed');
         setStage('打包失败');
         setMeta('');
-        showModal('打包失败', result.detail);
+        // 失败也要把提示带上：内存不足降级、缺 zstandard 这类说明不能只留在日志里
+        const notices = result.notices || [];
+        const detail = notices.length ? result.detail + '\n\n' + notices.join('\n') : result.detail;
+        showModal('打包失败', detail);
       }
     } catch (error) {
       gaugeRunning = false;

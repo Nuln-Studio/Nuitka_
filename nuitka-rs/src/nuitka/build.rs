@@ -138,6 +138,11 @@ fn notice_for(line: &str) -> Option<&'static str> {
 
 /// 实际传给 Nuitka 的参数（不含 python 自身）。
 fn arguments(request: &Request) -> Vec<String> {
+    arguments_for(request, available_memory_mb())
+}
+
+/// 内存作为参数传进来，测试才能固定住「内存多」「内存少」两种世界。
+fn arguments_for(request: &Request, free_mb: Option<u64>) -> Vec<String> {
     let mut args: Vec<String> = vec!["-m".into(), "nuitka".into()];
     args.push(
         if request.onefile {
@@ -148,10 +153,14 @@ fn arguments(request: &Request) -> Vec<String> {
         .to_string(),
     );
     // 压缩阶段按 CPU 核数开线程，内存小的机器会直接把内存吃爆
-    if request.onefile
-        && let Some(jobs) = compression_jobs()
-    {
-        args.push(format!("--jobs={jobs}"));
+    if request.onefile {
+        let already_off = request.extra.contains("--onefile-no-compression");
+        if compression_unaffordable_for(free_mb) && !already_off {
+            // 与其跑到 96% 再摊一句 Allocation error，不如一开始就不压
+            args.push("--onefile-no-compression".into());
+        } else if let Some(jobs) = free_mb.and_then(|free| jobs_for(free, cores())) {
+            args.push(format!("--jobs={jobs}"));
+        }
     }
     args.push(format!(
         "--windows-console-mode={}",
@@ -241,6 +250,29 @@ fn is_compiler_failure(detail: &str) -> bool {
     HINTS.iter().any(|hint| lower.contains(hint))
 }
 
+/// 一行输出算不算「值得给用户看的报错」。
+///
+/// 只认大写的 `FATAL` / `ERROR` 是不够的：Nuitka 最后崩在 Python 异常里时，
+/// 真正的原因行长这样——`zstandard.backend_c.ZstdError: zstd compress error: ...`，
+/// 里面没有任何大写关键字，于是被漏掉，界面只剩一句「退出码 1」。
+fn is_problem_line(line: &str) -> bool {
+    if line.contains("FATAL") || line.contains("ERROR") {
+        return true;
+    }
+    let lower = line.to_lowercase();
+    lower.contains("error:") || lower.contains("traceback (most recent call last)")
+}
+
+/// 单文件压缩阶段内存不够。这不是打包失败，只是压缩器要一次性申请一大块内存没排到。
+fn is_compression_oom(detail: &str) -> bool {
+    let lower = detail.to_lowercase();
+    (lower.contains("zstd") || lower.contains("zstandard"))
+        && (lower.contains("allocation")
+            || lower.contains("not enough memory")
+            || lower.contains("out of memory")
+            || lower.contains("内存不足"))
+}
+
 fn clean(value: &str) -> Option<&str> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -253,6 +285,17 @@ fn clean(value: &str) -> Option<&str> {
 /// zstd level 22 每个压缩线程要几百 MB。Nuitka 默认按 CPU 核数开线程，
 /// 内存不够的机器会在压缩阶段直接 `Allocation error : not enough memory`。
 const COMPRESSION_WORKER_MB: u64 = 600;
+
+/// 低于这个可用内存就干脆不压缩。实测 1 GB 可用内存在 zstd 高压缩级别下也会失败，
+/// 所以门槛按「能跑起来」留足余量，不按「理论上够」。
+const COMPRESSION_MIN_MB: u64 = 1500;
+
+/// 当前机器的内存够不够跑一轮单文件压缩。
+fn compression_unaffordable() -> bool {
+    available_memory_mb()
+        .map(|free| free < COMPRESSION_MIN_MB)
+        .unwrap_or(false)
+}
 
 #[cfg(windows)]
 fn available_memory_mb() -> Option<u64> {
@@ -271,17 +314,20 @@ fn available_memory_mb() -> Option<u64> {
     None
 }
 
-/// 需要显式压线程数时返回 `--jobs` 的值；内存够用返回 None，保持 Nuitka 默认。
-fn compression_jobs() -> Option<usize> {
-    let cores = std::thread::available_parallelism()
+fn cores() -> usize {
+    std::thread::available_parallelism()
         .map(|count| count.get())
-        .unwrap_or(1);
-    jobs_for(available_memory_mb()?, cores)
+        .unwrap_or(1)
 }
 
 fn jobs_for(free_mb: u64, cores: usize) -> Option<usize> {
     let affordable = (free_mb / COMPRESSION_WORKER_MB).max(1) as usize;
     (affordable < cores).then_some(affordable)
+}
+
+/// 内存够不够跑一轮压缩。拿不到内存数据时按「够」处理：不能因为读不到就替用户决定不压。
+fn compression_unaffordable_for(free_mb: Option<u64>) -> bool {
+    free_mb.map(|free| free < COMPRESSION_MIN_MB).unwrap_or(false)
 }
 
 /// 单文件压缩要用到 Python 里的 zstandard；没有它 Nuitka 会静默降级成不压缩。
@@ -487,6 +533,22 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
     let started = Instant::now();
     let mut args = arguments(request);
     let mut notices: Vec<String> = Vec::new();
+
+    // 内存不够时 arguments() 已经自己加了 --onefile-no-compression，
+    // 这里把原因说给用户听，否则他只会觉得「怎么这次没压缩」
+    if request.onefile
+        && compression_unaffordable()
+        && !request.extra.contains("--onefile-no-compression")
+    {
+        let free = available_memory_mb().unwrap_or(0);
+        let notice = format!(
+            "这次单文件没有压缩：打包时可用内存只有 {free} MB，压缩器起不来（会直接 Allocation error）。\
+功能不受影响，但体积会明显偏大。关掉一些程序再打包就能恢复压缩。"
+        );
+        on_line(&format!("[内存] {}", notice));
+        notices.push(notice);
+    }
+
     let mut result = execute(&python, &args, tool.as_ref(), &mut notices, &mut on_line)?;
 
     if result.cancelled {
@@ -516,6 +578,37 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
         args = arguments(&retry);
         on_line(&format!("[命令] {}", command_line(&retry)));
         result = execute(&python, &args, Some(&gcc), &mut notices, &mut on_line)?;
+        if result.cancelled {
+            let seconds = started.elapsed().as_secs();
+            log::info(&format!("打包已取消（{seconds} 秒）"));
+            return Ok(Outcome {
+                ok: false,
+                target: String::new(),
+                seconds,
+                detail: "已取消".to_string(),
+                notices,
+            });
+        }
+    }
+
+    // 压缩阶段内存不够导致失败：这不是打包失败，去掉压缩重跑一次就能出 exe。
+    // 内存占用量是动态的，预判可能有偏差，所以运行期这次兜底必须留着。
+    if !result.ok
+        && request.onefile
+        && is_compression_oom(&result.failure)
+        && !args.iter().any(|arg| arg == "--onefile-no-compression")
+    {
+        on_line("[重试] 压缩器内存不足，改成不压缩重新打包");
+        log::info("压缩阶段内存不足，去掉 --onefile 压缩后重试");
+        args.push("--onefile-no-compression".to_string());
+        let notice = "这次单文件没有压缩：压缩器申请内存失败（打包时内存不够）。功能不受影响，\
+但体积会明显偏大。关掉一些程序再打包就能恢复压缩。"
+            .to_string();
+        on_line(&format!("[内存] {notice}"));
+        if !notices.contains(&notice) {
+            notices.push(notice);
+        }
+        result = execute(&python, &args, tool.as_ref(), &mut notices, &mut on_line)?;
         if result.cancelled {
             let seconds = started.elapsed().as_secs();
             log::info(&format!("打包已取消（{seconds} 秒）"));
@@ -602,14 +695,21 @@ fn execute(
     drop(sender);
 
     let mut last_problem: Option<String> = None;
+    // 兜底用：万一整段输出里没有一行像样的错误，至少把最后一句有用的话带进弹窗，
+    // 总比只给用户一个「退出码 1」强
+    let mut last_line: Option<String> = None;
     for line in receiver {
         if let Some(notice) = notice_for(&line)
             && !notices.iter().any(|item| item == notice)
         {
             notices.push(notice.to_string());
         }
-        if line.contains("FATAL") || line.contains("ERROR") {
+        if is_problem_line(&line) {
             last_problem = Some(line.clone());
+        }
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with("Nuitka-Reports") {
+            last_line = Some(trimmed.to_string());
         }
         on_line(&line);
     }
@@ -633,7 +733,7 @@ fn execute(
             .code()
             .map(|code| code.to_string())
             .unwrap_or_else(|| "未知".to_string());
-        let detail = match last_problem {
+        let detail = match last_problem.or(last_line) {
             Some(line) => format!("Nuitka 退出码 {code}：{}", line.trim()),
             None => format!("Nuitka 退出码 {code}"),
         };
@@ -791,6 +891,43 @@ mod tests {
         );
         assert!(extra_tokens("   ").is_empty());
         assert!(extra_tokens("").is_empty());
+    }
+
+    /// 报错行不能只看大写关键字：zstd 崩在 Python 异常里时没有 FATAL/ERROR。
+    #[test]
+    fn problem_lines_include_python_exceptions() {
+        assert!(is_problem_line(
+            "zstandard.backend_c.ZstdError: zstd compress error: Allocation error : not enough memory"
+        ));
+        assert!(is_problem_line("FATAL: Error, no 'cl.exe' found"));
+        assert!(is_problem_line("Traceback (most recent call last):"));
+        assert!(!is_problem_line("scons: warning: MSVC version '14.50' was not found."));
+        assert!(!is_problem_line("Nuitka-Scons: Compiled 15 C files using clcache"));
+    }
+
+    #[test]
+    fn zstd_allocation_failure_is_recognised() {
+        assert!(is_compression_oom(
+            "Nuitka 退出码 1：zstandard.backend_c.ZstdError: zstd compress error: Allocation error : not enough memory"
+        ));
+        assert!(is_compression_oom("ZstdError: out of memory"));
+        assert!(!is_compression_oom("Nuitka 退出码 1：FATAL: Error, syntax error in module 'main'"));
+        assert!(!is_compression_oom("Nuitka 退出码 1：zstd 版本过旧"));
+    }
+
+    /// 内存紧张时应该一开始就不压缩，内存宽裕时才按核数压线程。
+    #[test]
+    fn low_memory_disables_onefile_compression() {
+        let tight = arguments_for(&sample(), Some(900));
+        assert!(tight.contains(&"--onefile-no-compression".to_string()));
+        assert!(!tight.iter().any(|arg| arg.starts_with("--jobs=")));
+
+        let plenty = arguments_for(&sample(), Some(8000));
+        assert!(!plenty.contains(&"--onefile-no-compression".to_string()));
+
+        // 读不到内存数据时不能擅自替用户决定不压
+        let unknown = arguments_for(&sample(), None);
+        assert!(!unknown.contains(&"--onefile-no-compression".to_string()));
     }
 
     #[test]
