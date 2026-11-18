@@ -18,6 +18,15 @@
 <!-- 项目信息 -->
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square&labelColor=555)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square&labelColor=555)](https://github.com/Nuln-Studio/Nuitka_/pulls)
+
+<!-- 下载入口：放在徽章后面、正文之前，别让人先读一屏再回头找 -->
+
+
+[![下载最新版](https://img.shields.io/badge/下载-Nuitka%2B%2B%20最新版-2ea44f.svg?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Nuln-Studio/Nuitka_/releases)
+[![Gitee 镜像](https://img.shields.io/badge/Gitee-代码镜像-C71D23.svg?style=for-the-badge&logo=gitee&logoColor=white)](https://gitee.com/nuln-studio/Nuitka_)
+
+> **去哪下**：[GitHub Releases](https://github.com/Nuln-Studio/Nuitka_/releases) 取最新那个 `.zip`，解压双击 `nuitka-rs.exe` 就能用，不用安装。
+> GitHub 打不开的话，[Gitee 仓库](https://gitee.com/nuln-studio/Nuitka_) 是同步的代码镜像，发行版还没往那边传，需要自己编译。
 ***
 **从零构建PythonEXE程序，即使你没有Python，即使你没装nuitka，即使你没有适合的C编译器，都可以用Nuitka++来一键解决！**
 

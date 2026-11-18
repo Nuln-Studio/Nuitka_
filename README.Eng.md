@@ -17,6 +17,13 @@
 <!-- Project info -->
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square&labelColor=555)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square&labelColor=555)](https://github.com/Nuln-Studio/Nuitka_/pulls)
+
+<!-- Download: right after the badges, before the body copy -->
+[![Download latest](https://img.shields.io/badge/Download-Nuitka%2B%2B%20latest-2ea44f.svg?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Nuln-Studio/Nuitka_/releases)
+[![Gitee mirror](https://img.shields.io/badge/Gitee-code%20mirror-C71D23.svg?style=for-the-badge&logo=gitee&logoColor=white)](https://gitee.com/nuln-studio/Nuitka_)
+
+> **Where to get it**: grab the newest `.zip` from [GitHub Releases](https://github.com/Nuln-Studio/Nuitka_/releases), unzip it, and double-click `nuitka-rs.exe`. No installer needed.
+> If GitHub is unreachable, the [Gitee repository](https://gitee.com/nuln-studio/Nuitka_) is a synced code mirror; releases are not mirrored there yet, so you would have to build it yourself.
 ***
 **Build a Python EXE from scratch — even if you don't have Python installed, even if Nuitka isn't set up, even if no suitable C compiler is available. Nuitka++ handles it all in one click!**
 
