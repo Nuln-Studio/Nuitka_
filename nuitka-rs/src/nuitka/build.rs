@@ -2,14 +2,54 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::time::Instant;
 
 use super::python_discovery::PyVersion;
 use super::{log, toolchain};
 
-/// 同一时间只允许一个打包任务，取消时要用这个 pid。
-static RUNNING: Mutex<Option<u32>> = Mutex::new(None);
+/// 同一时间只允许一个打包任务，取消时要用这里的 pid。
+///
+/// 槽里存的是「任务序号 + pid」，不是光存 pid：用户取消后可能立刻开下一个任务，
+/// 旧任务收尾时如果直接把槽清空，会把新任务的 pid 抹掉，导致取消按钮失效、
+/// 甚至能再开第三个任务并行跑。序号保证每个任务只动自己的槽。
+static RUNNING: Mutex<Option<Task>> = Mutex::new(None);
+static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Task {
+    id: u64,
+    pid: u32,
+}
+
+fn next_task_id() -> u64 {
+    NEXT_TASK.fetch_add(1, Ordering::Relaxed)
+}
+
+fn register_task(id: u64, pid: u32) {
+    if let Ok(mut slot) = RUNNING.lock() {
+        *slot = Some(Task { id, pid });
+    }
+}
+
+/// 只有槽里还是自己的序号时才清空，别的任务已经接管就什么都不做。
+fn clear_task(id: u64) {
+    if let Ok(mut slot) = RUNNING.lock()
+        && (*slot).map(|task| task.id) == Some(id)
+    {
+        *slot = None;
+    }
+}
+
+fn take_task() -> Option<Task> {
+    RUNNING.lock().ok().and_then(|mut slot| slot.take())
+}
+
+fn running() -> bool {
+    RUNNING.lock().map(|slot| slot.is_some()).unwrap_or(false)
+}
+
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub(crate) struct Request {
@@ -340,7 +380,7 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
         }
     }
 
-    if RUNNING.lock().map(|slot| slot.is_some()).unwrap_or(false) {
+    if running() {
         return Err("已经有一个打包任务在跑".to_string());
     }
 
@@ -443,12 +483,11 @@ fn execute(
         tool.apply(&mut command);
     }
 
+    let task_id = next_task_id();
     let mut child = command
         .spawn()
         .map_err(|error| format!("无法启动 Nuitka：{error}"))?;
-    if let Ok(mut slot) = RUNNING.lock() {
-        *slot = Some(child.id());
-    }
+    register_task(task_id, child.id());
 
     let (sender, receiver) = channel::<String>();
     let mut readers = Vec::new();
@@ -477,9 +516,7 @@ fn execute(
     }
 
     let status = child.wait().map_err(|error| error.to_string())?;
-    if let Ok(mut slot) = RUNNING.lock() {
-        *slot = None;
-    }
+    clear_task(task_id);
 
     if status.success() {
         Ok((true, String::new()))
@@ -530,19 +567,21 @@ fn decode_line(bytes: &[u8]) -> String {
 }
 
 /// 取消正在跑的打包（连子进程一起杀）。
-pub(crate) fn cancel() -> Result<(), String> {    let pid = RUNNING
-        .lock()
-        .ok()
-        .and_then(|mut slot| slot.take())
-        .ok_or_else(|| "当前没有正在进行的打包".to_string())?;
+pub(crate) fn cancel() -> Result<(), String> {
+    let task = take_task().ok_or_else(|| "当前没有正在进行的打包".to_string())?;
 
     let status = crate::util::command("taskkill.exe")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .args(["/PID", &task.pid.to_string(), "/T", "/F"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .map_err(|error| format!("无法结束进程：{error}"))?;
-    log::info(&format!("取消打包，pid {pid}，taskkill 结果 {}", status.success()));
+    log::info(&format!(
+        "取消打包，任务 {}，pid {}，taskkill 结果 {}",
+        task.id,
+        task.pid,
+        status.success()
+    ));
     Ok(())
 }
 
@@ -564,6 +603,32 @@ mod tests {
             compiler: "msvc:14.50".to_string(),
             extra: "--follow-imports".to_string(),
         }
+    }
+
+    /// P0-1 回归：取消后立刻开新任务，旧任务收尾不能抹掉新任务的 pid。
+    #[test]
+    fn stale_task_cannot_clear_the_new_one() {
+        let first = next_task_id();
+        register_task(first, 111);
+        assert_eq!(take_task(), Some(Task { id: first, pid: 111 })); // cancel 取走旧任务
+
+        let second = next_task_id();
+        register_task(second, 222);
+
+        clear_task(first); // 旧任务这时才收尾
+        assert_eq!(
+            take_task(),
+            Some(Task {
+                id: second,
+                pid: 222
+            }),
+            "旧任务把新任务的槽清掉了，取消按钮会失效"
+        );
+
+        // 正常收尾：自己清自己的
+        register_task(second, 222);
+        clear_task(second);
+        assert!(!running());
     }
 
     #[test]
