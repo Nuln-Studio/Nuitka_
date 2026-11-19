@@ -1386,9 +1386,10 @@
       copied = document.execCommand('copy');
       document.body.removeChild(area);
     }
-    const button = $('copyCmd');
-    button.textContent = copied ? '已复制' : '复制失败';
-    setTimeout(function () { button.textContent = '复制命令'; }, 1400);
+    // 只换文字，不动整个按钮：textContent 会把里面的图标一起清掉
+    const label = $('copyCmd').querySelector('span');
+    label.textContent = copied ? '已复制' : '复制失败';
+    setTimeout(function () { label.textContent = '复制命令'; }, 1400);
   });
 
   $('startBuild').addEventListener('click', startBuild);
@@ -1465,7 +1466,8 @@
   /* 从别处（比如打包前的 Python 提示）跳过来时也走这一套：返回按钮该回哪个页面按当前位置定 */
   function openSettingsPage() {
     settingsFrom = $('pageBuild').classList.contains('hidden') ? 'config' : 'build';
-    $('settingsBack').textContent = settingsFrom === 'build' ? '返回打包进度' : '返回项目配置';
+    $('settingsBack').querySelector('span').textContent =
+      settingsFrom === 'build' ? '返回打包进度' : '返回项目配置';
     paintSettings();
     showPage('settings');
   }
