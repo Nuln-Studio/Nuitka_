@@ -85,6 +85,11 @@ fn clear_cancelled(id: u64) {
 }
 
 
+/// 缺省按「开着」处理：老配置文件里没这个键，不该因为多了个开关就把功能关了。
+fn yes() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub(crate) struct Request {
     #[serde(default)]
@@ -107,6 +112,10 @@ pub(crate) struct Request {
     /// 打包完试运行一次产物，用来抓「编译成功但一启动就缺包」这类问题
     #[serde(default)]
     pub smoke: bool,
+    /// 内存吃紧时是否自动降级：预置 `--onefile-no-compression`、按可用内存压并行数，
+    /// 以及撞上压缩 OOM 后再摘掉压缩重跑一次。关掉它，参数就完全照请求来，不多塞一个。
+    #[serde(default = "yes")]
+    pub degrade: bool,
     /// "msvc" 或 "gcc"；不指定的话 Nuitka 会自己挑，往往挑错
     #[serde(default)]
     pub compiler: String,
@@ -156,8 +165,9 @@ fn arguments_for(request: &Request, free_mb: Option<u64>) -> Vec<String> {
         }
         .to_string(),
     );
-    // 压缩阶段按 CPU 核数开线程，内存小的机器会直接把内存吃爆
-    if request.onefile {
+    // 压缩阶段按 CPU 核数开线程，内存小的机器会直接把内存吃爆。
+    // 用户关掉自动降级时这段整块跳过：压缩照开、并行照默认，崩了就把原始报错丢给他。
+    if request.onefile && request.degrade {
         let already_off = request.extra.contains("--onefile-no-compression");
         if compression_unaffordable_for(free_mb) && !already_off {
             // 与其跑到 96% 再摊一句 Allocation error，不如一开始就不压
@@ -712,9 +722,10 @@ pub(crate) fn run<F: FnMut(&str)>(request: &Request, mut on_line: F) -> Result<O
     }
 
     // 压缩阶段内存不够导致失败：这不是打包失败，去掉压缩重跑一次就能出 exe。
-    // 内存占用量是动态的，预判可能有偏差，所以运行期这次兜底必须留着。
+    // 内存占用量是动态的，预判可能有偏差，所以运行期这次兜底必须留着——用户关掉降级时才不兜。
     if !result.ok
         && request.onefile
+        && request.degrade
         && is_compression_oom(&result.failure)
         && !args.iter().any(|arg| arg == "--onefile-no-compression")
     {
@@ -962,6 +973,7 @@ mod tests {
             show_progress: true,
             download: true,
             smoke: false,
+            degrade: true,
             compiler: "msvc:14.50".to_string(),
             extra: "--follow-imports".to_string(),
         }
@@ -1077,6 +1089,19 @@ mod tests {
         // 读不到内存数据时不能擅自替用户决定不压
         let unknown = arguments_for(&sample(), None);
         assert!(!unknown.contains(&"--onefile-no-compression".to_string()));
+    }
+
+    /// 关掉自动降级：内存再紧也不许背着他改参数，让 Nuitka 按原样跑。
+    #[test]
+    fn degrade_off_leaves_arguments_alone() {
+        let mut request = sample();
+        request.degrade = false;
+        let tight = arguments_for(&request, Some(400));
+        assert!(!tight.contains(&"--onefile-no-compression".to_string()));
+        assert!(!tight.iter().any(|arg| arg.starts_with("--jobs=")));
+        // 该有的参数一个不少，只是不加料
+        assert!(tight.contains(&"--onefile".to_string()));
+        assert!(tight.contains(&"--msvc=14.50".to_string()));
     }
 
     /// 试运行产物时要从输出里认出缺的是哪个模块。
@@ -1384,6 +1409,7 @@ which among other things depends on it.";
             show_progress: true,
             download: true,
             smoke: false,
+            degrade: true,
             compiler: "msvc:14.50".to_string(),
             extra: String::new(),
         };
@@ -1439,6 +1465,7 @@ which among other things depends on it.";
             show_progress: true,
             download: true,
             smoke: false,
+            degrade: true,
             compiler: "msvc:14.50".to_string(),
             extra: String::new(),
         };

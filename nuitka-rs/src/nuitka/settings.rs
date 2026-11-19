@@ -95,6 +95,12 @@ pub(crate) struct Form {
     /// 打包完是否试运行一次产物；关掉它就不会有窗口闪一下
     #[serde(default = "yes")]
     pub smoke: bool,
+    /// 打包前是否弹「建议换个 Python」的提醒；嫌烦的人可以关掉，不再每次打包都跳
+    #[serde(default = "yes")]
+    pub python_hint: bool,
+    /// 内存不够时是否自动降级（省掉压缩、按可用内存压并行数）；关掉就完全按请求的参数来
+    #[serde(default = "yes")]
+    pub degrade: bool,
     #[serde(default)]
     pub extra: String,
 }
@@ -111,6 +117,8 @@ impl Default for Form {
             progress: true,
             download: true,
             smoke: true,
+            python_hint: true,
+            degrade: true,
             extra: String::new(),
         }
     }

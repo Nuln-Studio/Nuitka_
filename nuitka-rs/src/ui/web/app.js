@@ -24,6 +24,8 @@
     progress: true,
     download: true,
     smoke: true,
+    pythonHint: true,
+    degrade: true,
     extra: '',
     pythonChoice: '3.12',
     pythonCanPrepare: true,
@@ -877,6 +879,7 @@
       show_progress: state.progress,
       download: state.download,
       smoke: state.smoke,
+      degrade: state.degrade,
       compiler: state.compiler,
       extra: state.extra
     };
@@ -977,6 +980,8 @@
       progress: state.progress,
       download: state.download,
       smoke: state.smoke,
+      python_hint: state.pythonHint,
+      degrade: state.degrade,
       extra: state.extra
     };
   }
@@ -999,6 +1004,8 @@
     state.progress = form.progress !== false;
     state.download = form.download !== false;
     state.smoke = form.smoke !== false;
+    state.pythonHint = form.python_hint !== false;
+    state.degrade = form.degrade !== false;
     state.extra = form.extra || '';
 
     $('appName').value = state.name;
@@ -1006,6 +1013,8 @@
     $('optProgress').checked = state.progress;
     $('optDownload').checked = state.download;
     $('optSmoke').checked = state.smoke;
+    $('optPythonHint').checked = state.pythonHint;
+    $('optDegrade').checked = state.degrade;
     paintSegment('modeSeg', state.mode);
     paintSegment('consoleSeg', state.console);
     update();
@@ -1066,6 +1075,12 @@
       ? '当前生效  ' + compilerLabel(state.compiler)
       : (state.compilerSetting ? '这个路径下没有可用工具链' : '当前没有找到可用的编译器');
     $('optAutoSave').checked = state.autoSave;
+    // 行为开关现在住在设置页：每次进来都按 state 重画一遍，免得显示和实际用的不一致
+    $('optProgress').checked = state.progress;
+    $('optDownload').checked = state.download;
+    $('optSmoke').checked = state.smoke;
+    $('optPythonHint').checked = state.pythonHint;
+    $('optDegrade').checked = state.degrade;
     $('settingsFiles').textContent = state.settingsPath ? '软件设置  ' + state.settingsPath : '';
     $('settingsFormPath').textContent = state.formPath ? '上次配置  ' + state.formPath : '';
   }
@@ -1141,6 +1156,7 @@
    * 这里只做一件事：不管你用的是哪个 Python 都提醒一次，并把当前路径摆出来。
    */
   async function confirmPython() {
+    if (!state.pythonHint) return true;        // 用户关掉了这条提醒，就别每次打包都拦一下
     if (!state.pythonPath || !bridge) return true;
 
     const go = await confirmPrompt(
@@ -1287,15 +1303,35 @@
 
   $('optProgress').addEventListener('change', function (event) {
     state.progress = event.target.checked;
+    saveSwitches();
   });
 
   $('optDownload').addEventListener('change', function (event) {
     state.download = event.target.checked;
+    saveSwitches();
   });
 
   $('optSmoke').addEventListener('change', function (event) {
     state.smoke = event.target.checked;
+    saveSwitches();
   });
+
+  $('optPythonHint').addEventListener('change', function (event) {
+    state.pythonHint = event.target.checked;
+    saveSwitches();
+  });
+
+  $('optDegrade').addEventListener('change', function (event) {
+    state.degrade = event.target.checked;
+    saveSwitches();
+  });
+
+  /* 开关是行为偏好：在设置页里一改就落盘，别等到下次打包才记住。
+     但用户关掉「自动记住上一次项目配置」时就不写盘——那等于他连路径也不想被记住。 */
+  function saveSwitches() {
+    if (!bridge || !state.autoSave) return;
+    bridge.invoke('write_form', { form: formOf() }).catch(function () {});
+  }
 
   $('resetForm').addEventListener('click', function () {
     if (building) return;
@@ -1309,11 +1345,15 @@
     state.progress = true;
     state.download = true;
     state.smoke = true;
+    state.pythonHint = true;
+    state.degrade = true;
     $('appName').value = '';
     $('extraArgs').value = '';
     $('optProgress').checked = true;
     $('optDownload').checked = true;
     $('optSmoke').checked = true;
+    $('optPythonHint').checked = true;
+    $('optDegrade').checked = true;
     Array.prototype.forEach.call($('modeSeg').children, function (child, index) {
       child.classList.toggle('on', index === 0);
     });

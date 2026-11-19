@@ -211,14 +211,6 @@
                 </div>
               </div>
 
-              <div class="field field-checks">
-                <span class="label"></span>
-                <div class="control checks">
-                  <label class="check"><input type="checkbox" id="optProgress" checked><span>显示编译进度</span></label>
-                  <label class="check"><input type="checkbox" id="optDownload" checked><span>缺组件时自动下载</span></label>
-                  <label class="check"><input type="checkbox" id="optSmoke" checked><span>完成后试运行产物</span></label>
-                </div>
-              </div>
             </section>
 
             <div class="target">
@@ -346,22 +338,90 @@
 
             <section class="group">
               <header class="group-head">
-                <h3>配置记忆</h3>
+                <h3>行为开关</h3>
                 <span class="group-rule"></span>
               </header>
 
-              <div class="field field-checks">
-                <span class="label"></span>
-                <div class="control checks">
-                  <label class="check"><input type="checkbox" id="optAutoSave" checked><span>自动记住上一次项目配置</span></label>
-                </div>
+              <div class="switches">
+                <label class="switch-row">
+                  <span class="switch-text">
+                    <strong>显示编译进度</strong>
+                    <small>打包时显示进度环与阶段文字，关掉只剩等待</small>
+                  </span>
+                  <span class="switch"><input type="checkbox" id="optProgress" checked><i class="knob"></i></span>
+                </label>
+
+                <label class="switch-row">
+                  <span class="switch-text">
+                    <strong>缺组件时自动下载</strong>
+                    <small>Nuitka 需要额外组件时不再逐项问你</small>
+                  </span>
+                  <span class="switch"><input type="checkbox" id="optDownload" checked><i class="knob"></i></span>
+                </label>
+
+                <label class="switch-row">
+                  <span class="switch-text">
+                    <strong>完成后试运行产物</strong>
+                    <small>抓「编译成功但一启动就缺库」；GUI 程序会闪一下窗口</small>
+                  </span>
+                  <span class="switch"><input type="checkbox" id="optSmoke" checked><i class="knob"></i></span>
+                </label>
+
+                <label class="switch-row">
+                  <span class="switch-text">
+                    <strong>打包前提示检查 Python 环境</strong>
+                    <small>每次开始打包先弹一次「建议换成本机 Python」的窗口</small>
+                  </span>
+                  <span class="switch"><input type="checkbox" id="optPythonHint" checked><i class="knob"></i></span>
+                </label>
+
+                <label class="switch-row">
+                  <span class="switch-text">
+                    <strong>内存不足时自动降级</strong>
+                    <small>内存紧张时自动省掉单文件压缩、压低并行数，崩了再兜底重跑</small>
+                  </span>
+                  <span class="switch"><input type="checkbox" id="optDegrade" checked><i class="knob"></i></span>
+                </label>
+
+                <label class="switch-row">
+                  <span class="switch-text">
+                    <strong>自动记住上一次项目配置</strong>
+                    <small>下次打开沿用上次的脚本、输出目录与参数</small>
+                  </span>
+                  <span class="switch"><input type="checkbox" id="optAutoSave" checked><i class="knob"></i></span>
+                </label>
               </div>
+            </section>
+
+            <section class="group">
+              <header class="group-head">
+                <h3>配置文件</h3>
+                <span class="group-rule"></span>
+              </header>
 
               <div class="field">
-                <span class="label">配置文件</span>
+                <span class="label">位置</span>
                 <div class="control">
                   <p class="path" id="settingsFiles"></p>
                   <p class="path" id="settingsFormPath"></p>
+                </div>
+              </div>
+            </section>
+
+            <section class="group">
+              <header class="group-head">
+                <h3>版本</h3>
+                <span class="group-rule"></span>
+              </header>
+
+              <div class="field">
+                <span class="label">当前版本</span>
+                <div class="control">
+                  <div class="control-row">
+                    <span class="value" id="settingsVersion">Nuitka++ 0.2.0</span>
+                    <button class="btn secondary small" id="checkUpdate" disabled>检查更新</button>
+                  </div>
+                  <p class="path">暂不可用：更新检查还没做完，等有了稳定的发布源再开放。</p>
                 </div>
               </div>
             </section>
