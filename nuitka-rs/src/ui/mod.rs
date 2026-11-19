@@ -324,6 +324,29 @@ fn open_path(path: String) -> Result<(), String> {
         .map_err(|error| format!("无法打开目录：{error}"))
 }
 
+/// 「关于」里的官网入口。这个命令本质上是替用户开浏览器，
+/// 所以只认项目自己的站点：不设白名单就等于留了个任意 URL 启动器。
+const SITES: &[&str] = &[
+    "https://www.nulnstudio.com/",
+    "https://github.com/Nuln-Studio/",
+    "https://gitee.com/nuln-studio/",
+];
+
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !SITES.iter().any(|prefix| trimmed.starts_with(prefix)) {
+        return Err(format!("这个链接不在白名单里：{trimmed}"));
+    }
+    // 交给 url.dll 而不是 `cmd /c start`：后者会把 URL 里的 & 当成命令分隔符
+    crate::util::command("rundll32.exe")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(trimmed)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("打不开链接：{error}"))
+}
+
 /// 读回用户选的 `.ico`，编码成 data URI 给界面画预览。
 ///
 /// 意图上只服务预览：限 1 MB、必须是 `.ico`，不做通用文件读取。
@@ -406,6 +429,7 @@ pub fn run() {
             cancel_build,
             open_log,
             open_path,
+            open_url,
             python_options,
             plan_env,
             prepare_env,

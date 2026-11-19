@@ -317,6 +317,39 @@ input { font: inherit; }
   cursor: default;
 }
 
+/* ---------------- 图标 ---------------- */
+
+/* 符号表本身不占位，只是被 <use> 引用的定义 */
+.icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.ic {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* 图标跟着文字的颜色走，主按钮、禁用态都不用手动改色 */
+  opacity: 0.92;
+}
+
+.btn,
+.link {
+  gap: 6px;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+}
+
 /* ---------------- 启动向导 ---------------- */
 
 .wizard {
@@ -1092,6 +1125,129 @@ input { font: inherit; }
 }
 
 .switch input:checked + .knob { transform: translateX(18px); }
+
+/* ---------------- 贡献者 ---------------- */
+
+.contributors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 2px 0 4px;
+}
+
+.contributor {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  width: 88px;
+}
+
+.contributor img {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+  object-fit: cover;
+}
+
+.contributor strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ---------------- 关于页 ---------------- */
+
+.about-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.about-brand img {
+  width: 52px;
+  height: 52px;
+  flex: none;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+  object-fit: contain;
+}
+
+.about-id h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.about-version {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--accent);
+}
+
+.about-tag {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--ink-3);
+}
+
+.about-update {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.about-hint {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+/* 每一块信息自带分隔线，视觉上和上面的品牌区隔开 */
+.about-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.about-key {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.about-name {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--ink);
+}
+
+.about-desc {
+  margin: 3px 0 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-3);
+}
+
+.about-block .contributors {
+  padding: 2px 0 0;
+}
 
 .check {
   display: flex;

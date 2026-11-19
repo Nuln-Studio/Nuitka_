@@ -674,6 +674,7 @@
     $('pageConfig').classList.toggle('hidden', name !== 'config');
     $('pageBuild').classList.toggle('hidden', name !== 'build');
     $('pageSettings').classList.toggle('hidden', name !== 'settings');
+    $('pageAbout').classList.toggle('hidden', name !== 'about');
   }
 
   let gaugeTarget = 0;
@@ -1475,6 +1476,25 @@
 
   $('settingsBack').addEventListener('click', function () {
     showPage(settingsFrom);
+  });
+
+  // 「关于」里的官网入口：地址写死在这，后端还会按白名单再核一次
+  $('openSite').addEventListener('click', async function () {
+    if (!bridge) return;
+    try {
+      await bridge.invoke('open_url', { url: 'https://www.nulnstudio.com/home' });
+    } catch (error) {
+      $('aboutStatus').textContent = String(error);
+    }
+  });
+
+  // 关于是独立一页：设置页底栏进，关于页底栏回设置
+  $('openAbout').addEventListener('click', function () {
+    showPage('about');
+  });
+
+  $('aboutBack').addEventListener('click', function () {
+    showPage('settings');
   });
 
   // 改完路径就写盘并重新检测：状态条和打包用的都是这一份选择
